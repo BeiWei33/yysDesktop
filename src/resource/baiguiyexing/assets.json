@@ -1,0 +1,53 @@
+{
+    "current_path": "baiguiyexing",
+    "image_data": [
+        {
+            "name": "baiguiqiyueshu",
+            "file": "baiguiqiyueshu.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        },
+        {
+            "name": "jinru",
+            "file": "jinru.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        },
+        {
+            "name": "kaishi",
+            "file": "kaishi.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        },
+        {
+            "name": "title",
+            "file": "title.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        },
+        {
+            "name": "choose",
+            "file": "choose.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        },
+        {
+            "name": "xingchongju_refresh",
+            "file": "xingchongju_refresh.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        },
+        {
+            "name": "yaoqing",
+            "file": "yaoqing.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        },
+        {
+            "name": "yaoqing_prompt",
+            "file": "yaoqing_prompt.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        }
+    ]
+}

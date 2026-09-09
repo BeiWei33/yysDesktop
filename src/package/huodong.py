@@ -1,0 +1,144 @@
+from ..utils.adapter import Mouse
+from ..utils.event import event_thread
+from ..utils.exception import GUIStopException, TimesNotEnoughException
+from ..utils.function import finish_random_left_right, sleep
+from ..utils.image import RuleImage, check_image_once
+from ..utils.log import logger
+from ..utils.paddleocr import RuleOcr
+from .base_package import BasePackage
+
+
+class HuoDong(BasePackage):
+    """限时活动"""
+
+    scene_name = "限时活动"
+    resource_path = "huodong"
+
+    # 两种结算方式
+    STATE_NORMAL = 1  # 「达摩蛋」弹出
+    STATE_RESULT = 2  # 「获得奖励」弹窗
+
+    def __init__(self, n: int = 0) -> None:
+        super().__init__(n)
+        self.flag_soul_overflow: bool = False
+        self.state = None
+
+    @staticmethod
+    def description() -> None:
+        logger.ui("限时活动，适配通用爬塔活动")
+
+    def load_asset(self) -> None:
+        self.IMAGE_RESULT = self.get_image_asset("result")
+        self.IMAGE_SNAKE_PURPLE = self.get_image_asset("snake_purple")
+
+    def check_start(self) -> None:
+        ruleocr = RuleOcr(self.global_assets.OCR_START)
+        result = ruleocr.match()
+        if result is None:
+            return
+
+        # 第一次检测到
+        logger.ui("检测到挑战按钮")
+        Mouse.click(result.center)
+        sleep()
+        for i in range(3):
+            result = ruleocr.match()
+            if result:
+                logger.ui_warn(f"未进入，重试第{i + 1}次")
+                Mouse.click(result.center)
+                sleep()
+            else:
+                return
+        logger.ui_error("重试3次后仍未进入，请检查")
+        raise TimesNotEnoughException
+
+    def run(self) -> None:
+        self.current_asset_list = [
+            self.IMAGE_RESULT,
+            self.IMAGE_SNAKE_PURPLE,
+            self.global_assets.IMAGE_FINISH,
+        ]
+        self.current_asset_list.extend(self.global_assets.ALL_FAIL_IMAGES)
+        self.current_asset_list.extend(self.global_assets.ALL_VICTORY_IMAGES)
+        self.current_asset_list.append(self.global_assets.IMAGE_SOUL_OVERFLOW)
+
+        _flag_title_msg: bool = True
+        _flag_result_click: bool = False  # 部分活动会有“获得奖励”弹窗
+        self.log_current_asset_list()
+        _flag_done: bool = False
+
+        while self.n < self.max:
+            if bool(event_thread):
+                raise GUIStopException
+
+            result = check_image_once(self.current_asset_list)
+            if result is None:
+                self.check_start()
+                sleep()
+                continue
+
+            logger.info(f"current result name: {result.name}")
+            match result.name:
+                case self.IMAGE_RESULT.name:
+                    self.state = self.STATE_RESULT
+                    logger.ui("获得奖励")
+                    finish_random_left_right(is_multiple_drops_x=True, is_multiple_drops_y=True)
+                    self.done()
+                    _flag_result_click = True
+                    sleep(0.4, 0.8)
+
+                case name if name in self.global_assets.ALL_FAIL_NAMES:
+                    logger.ui_error(f"失败{('（' + result.description + '）') if result.description else ''}")
+                    break
+
+                case name if name in self.global_assets.ALL_VICTORY_NAMES:
+                    logger.ui(f"胜利{('（' + result.description + '）') if result.description else ''}")
+                    if _flag_result_click:
+                        Mouse.click()
+                        if not _flag_done:
+                            self.done()
+                            _flag_done = True
+                        continue
+                    sleep()
+
+                case self.IMAGE_SNAKE_PURPLE.name | self.global_assets.IMAGE_FINISH.name:
+                    if result.name == self.IMAGE_SNAKE_PURPLE.name:
+                        logger.ui("获得「八岐大蛇鳞片」")
+                    else:
+                        logger.ui("结束")
+                    sleep(0.4, 0.8)
+                    _point = finish_random_left_right(is_multiple_drops_x=True, is_multiple_drops_y=True)
+                    sleep()
+                    if self.flag_soul_overflow:
+                        sleep()
+
+                    while True:
+                        if bool(event_thread):
+                            raise GUIStopException
+
+                        # 先判断御魂上限提醒
+                        result = RuleImage(self.global_assets.IMAGE_SOUL_OVERFLOW)
+                        if result.match():
+                            self.soul_overflow_warn_msg()
+                            self.flag_soul_overflow = True
+                            Mouse.click(result.center_point())
+                            sleep()
+                            continue
+
+                        # 未重复检测到，表示成功点击
+                        if not RuleImage(self.global_assets.IMAGE_FINISH).match():
+                            break
+                        Mouse.click(_point)
+
+                    self.done()
+
+                case self.global_assets.IMAGE_SOUL_OVERFLOW.name:
+                    self.soul_overflow_warn_msg()
+                    self.flag_soul_overflow = True
+                    Mouse.click(result.center_point())
+                    sleep()
+
+                case _:
+                    if _flag_title_msg:
+                        self.title_error_msg()
+                        _flag_title_msg = False

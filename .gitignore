@@ -1,0 +1,23 @@
+# file
+*.pyc
+*.xml
+*.exe
+*.log
+src/utils/debug_version.py
+
+# dir
+build
+build-*
+data
+dist
+dist-*
+doc
+lib
+log
+models
+releases
+.superpowers
+.venv
+.pytest_cache
+.pytest-tmp-*
+__pycache__

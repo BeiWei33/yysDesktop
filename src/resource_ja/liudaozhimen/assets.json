@@ -1,0 +1,53 @@
+{
+    "current_path": "liudaozhimen",
+    "image_data": [
+        {
+            "name": "determine",
+            "file": "determine.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        },
+        {
+            "name": "fight",
+            "file": "fight.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        },
+        {
+            "name": "fight_choose_skill_refresh",
+            "file": "fight_choose_skill_refresh.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"    
+        },
+        {
+            "name": "imitation",
+            "file": "imitation.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        },
+        {
+            "name": "open",
+            "file": "open.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        },
+        {
+            "name": "quit",
+            "file": "quit.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"    
+        },
+        {
+            "name": "shop_refresh",
+            "file": "shop_refresh.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        },
+        {
+            "name": "start",
+            "file": "start.png",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
+        }
+    ]
+}

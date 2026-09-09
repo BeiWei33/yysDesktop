@@ -1,0 +1,640 @@
+from typing import ClassVar
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QIcon
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from qfluentwidgets import (
+    BodyLabel,
+    CaptionLabel,
+    CardWidget,
+    ColorDialog,
+    ComboBox,
+    ExpandGroupSettingCard,
+    FluentIcon,
+    HyperlinkLabel,
+    IconWidget,
+    IndicatorPosition,
+    PushButton,
+    QColor,
+    ScrollArea,
+    SubtitleLabel,
+    SwitchButton,
+)
+
+from ..utils.application import (
+    HELP_DOC_LINK,
+    HOME_PAGE_LINK,
+    QQ_GROUP_LINK,
+)
+from ..utils.config import DEFAULT_LOG_COLORS, InteractionMode, LogColorLevel, config, default_config
+from .game_function_selector_widget import GameFunctionSelectorWidget
+
+
+class AppCard(CardWidget):
+    def __init__(self, icon, title, content, parent=None):
+        super().__init__(parent)
+        self.iconWidget = IconWidget(icon)
+        self.titleLabel = BodyLabel(title, self)
+        self.contentLabel = CaptionLabel(content, self)
+
+        self.hBoxLayout = QHBoxLayout(self)
+        self.vBoxLayout = QVBoxLayout()
+
+        self.setFixedHeight(73)
+        self.iconWidget.setFixedSize(16, 16)
+        self.contentLabel.setTextColor("#606060", "#d2d2d2")
+
+        self.hBoxLayout.setContentsMargins(20, 11, 11, 11)
+        self.hBoxLayout.setSpacing(15)
+        self.hBoxLayout.addWidget(self.iconWidget)
+
+        self.vBoxLayout.setContentsMargins(0, 0, 0, 0)
+        self.vBoxLayout.setSpacing(0)
+        self.vBoxLayout.addWidget(self.titleLabel, 0, Qt.AlignVCenter)
+        self.vBoxLayout.addWidget(self.contentLabel, 0, Qt.AlignVCenter)
+        self.vBoxLayout.setAlignment(Qt.AlignVCenter)
+        self.hBoxLayout.addLayout(self.vBoxLayout)
+
+        self.hBoxLayout.addStretch(1)
+
+
+class SettingLanguageCard(AppCard):
+    """设置项-游戏服务器"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.LANGUAGE,
+            "游戏服务器",
+            "重启后生效",
+            parent,
+        )
+
+        self.combobox = ComboBox()
+        self.combobox.addItems(default_config.game_language)
+        self.combobox.setFixedWidth(120)
+        self.combobox.currentIndexChanged.connect(self._config_update)
+
+        self.hBoxLayout.addWidget(self.combobox)
+
+    def _config_update(self):
+        text = self.combobox.currentText()
+        if text != config.user.game_language:
+            config.update("game_language", text)
+
+
+class SettingXuanshangfengyinCard(AppCard):
+    """设置项-悬赏封印"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.GAME,
+            "悬赏封印",
+            "长时间运行时可切换至忽略状态",
+            parent,
+        )
+
+        self.combobox = ComboBox()
+        self.combobox.addItems(default_config.xuanshangfengyin)
+        self.combobox.setFixedWidth(120)
+        self.combobox.currentIndexChanged.connect(self._config_update)
+
+        self.hBoxLayout.addWidget(self.combobox)
+
+    def _config_update(self):
+        text = self.combobox.currentText()
+        if text != config.user.xuanshangfengyin:
+            config.update("xuanshangfengyin", text)
+
+
+class SettingRememberLastChoiceCard(AppCard):
+    """设置项-记住上次选择的功能"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.APPLICATION,
+            "记住上次选择的功能",
+            "每次启动软件后自动选择上次选择的功能",
+            parent,
+        )
+
+        self.switch = SwitchButton(indicatorPos=IndicatorPosition.RIGHT)  # 文本在左侧
+        self.switch.setOnText("启用")
+        self.switch.setOffText("禁用")
+        self.switch.setChecked(default_config.remember_last_choice)
+        self.switch.checkedChanged.connect(self._config_update)
+
+        self.hBoxLayout.addWidget(self.switch)
+
+    def _config_update(self):
+        choice = self.switch.isChecked()
+        if choice != config.user.remember_last_choice:
+            config.update("remember_last_choice", choice)
+
+
+class SettingShortcutStartStopCard(AppCard):
+    """设置项-快捷键"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.APPLICATION,
+            "快捷键",
+            "启动/停止快捷键",
+            parent,
+        )
+
+        self.combobox = ComboBox()
+        self.combobox.addItems(default_config.shortcut_start_stop)
+        self.combobox.setFixedWidth(120)
+        self.combobox.currentIndexChanged.connect(self._config_update)
+
+        self.hBoxLayout.addWidget(self.combobox)
+
+    def _config_update(self):
+        text = self.combobox.currentText()
+        if text != config.user.shortcut_start_stop:
+            config.update("shortcut_start_stop", text)
+
+
+class ColorSettingRow(QWidget):
+    """颜色设置项卡片"""
+
+    _DIALOG_TRANSLATIONS: ClassVar[dict[str, str]] = {
+        "yesButton": "确定",
+        "cancelButton": "取消",
+        "editLabel": "编辑颜色",
+        "redLabel": "红",
+        "greenLabel": "绿",
+        "blueLabel": "蓝",
+        "opacityLabel": "不透明度",
+    }
+
+    def __init__(self, config_key: str, dialog_title: str, parent=None):
+        super().__init__(parent)
+        self._config_key = config_key
+        self._dialog_title = dialog_title
+
+        self.preview = self._create_color_preview(self._read_color())
+        self.open_button = PushButton("选择颜色")
+        self.open_button.clicked.connect(self._open_color_dialog)
+        self.reset_button = PushButton("重置")
+        self.reset_button.clicked.connect(self._reset_color)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(self.preview, 0, Qt.AlignVCenter)
+        layout.addWidget(self.open_button)
+        layout.addWidget(self.reset_button)
+
+    def _read_color(self) -> str:
+        """按点分路径读取当前配置颜色"""
+        value = config.user
+        for key in self._config_key.split("."):
+            value = getattr(value, key)
+        return value
+
+    def _open_color_dialog(self):
+        w = self._localize_dialog(
+            ColorDialog(
+                QColor(self._read_color()),
+                self._dialog_title,
+                self.window(),
+                enableAlpha=False,
+            )
+        )
+        if w.exec():
+            color = w.color.name()
+            config.update(self._config_key, color)
+            self._update_preview_color(color)
+
+    @staticmethod
+    def _localize_dialog(w: ColorDialog) -> ColorDialog:
+        """强制将颜色选择框内的英文界面文本替换为中文"""
+        for attr, text in ColorSettingRow._DIALOG_TRANSLATIONS.items():
+            getattr(w, attr).setText(text)
+        return w
+
+    @staticmethod
+    def _color_preview_style(color: str) -> str:
+        """颜色预览块样式"""
+        return f"background-color: {color};border: 1px solid rgba(0, 0, 0, 0.25);border-radius: 4px;"
+
+    @classmethod
+    def _create_color_preview(cls, color: str) -> QLabel:
+        """创建颜色预览块"""
+        preview = QLabel()
+        preview.setFixedSize(36, 24)
+        preview.setStyleSheet(cls._color_preview_style(color))
+        return preview
+
+    def _update_preview_color(self, color: str):
+        """更新颜色预览块颜色"""
+        self.preview.setStyleSheet(self._color_preview_style(color))
+
+    def set_color(self, color: str):
+        """写入指定颜色并同步配置与预览"""
+        config.update(self._config_key, color)
+        self._update_preview_color(color)
+
+    def _reset_color(self):
+        """将当前行日志颜色重置为默认值"""
+        self.set_color(DEFAULT_LOG_COLORS[LogColorLevel(self._config_key.rsplit(".", 1)[-1])])
+
+
+class SettingLoggerColorCard(ExpandGroupSettingCard):
+    """设置项-日志颜色"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.PALETTE,
+            "日志颜色",
+            "自定义普通、提示、警告、错误日志在界面显示的颜色",
+            parent,
+        )
+
+        self._color_rows = {}
+        for config_key, title in (
+            ("log_color.info", "普通信息"),
+            ("log_color.hint", "提示信息"),
+            ("log_color.warn", "警告信息"),
+            ("log_color.error", "错误信息"),
+        ):
+            row = ColorSettingRow(config_key, f"选择{title}的颜色")
+            self._color_rows[config_key] = row
+            self.addGroup(QIcon(), title, "", row)
+
+        self.reset_button = PushButton("重置")
+        self.reset_button.clicked.connect(self.reset_colors)
+        self.card.addWidget(self.reset_button)
+
+    def reset_colors(self):
+        """重置所有日志颜色为默认值"""
+        for config_key, row in self._color_rows.items():
+            row.set_color(DEFAULT_LOG_COLORS[LogColorLevel(config_key.rsplit(".", 1)[-1])])
+
+
+class SettingWinToastCard(AppCard):
+    """设置项-系统通知"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.RINGER,
+            "系统通知",
+            "使用Windows系统通知推送关键事件",
+            parent,
+        )
+
+        self.switch = SwitchButton(indicatorPos=IndicatorPosition.RIGHT)  # 文本在左侧
+        self.switch.setOnText("启用")
+        self.switch.setOffText("禁用")
+        self.switch.setChecked(default_config.win_toast)
+        self.switch.checkedChanged.connect(self._config_update)
+
+        self.hBoxLayout.addWidget(self.switch)
+
+    def _config_update(self):
+        status = self.switch.isChecked()
+        if status != config.user.win_toast:
+            config.update("win_toast", status)
+
+
+class SettingBattleThemeCard(AppCard):
+    """设置项-战斗主题识别"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.APPLICATION,
+            "战斗主题识别Beta",
+            "识别特殊战斗主题的胜利/失败画面（登云问翠、茸茨跃动等），开启此功能会延长识别时间",
+            parent,
+        )
+
+        self.switch = SwitchButton(indicatorPos=IndicatorPosition.RIGHT)
+        self.switch.setOnText("启用")
+        self.switch.setOffText("禁用")
+        self.switch.setChecked(config.user.battle_theme_recognition)
+        self.switch.checkedChanged.connect(self._config_update)
+
+        self.hBoxLayout.addWidget(self.switch)
+
+    def _config_update(self):
+        status = self.switch.isChecked()
+        if status != config.user.battle_theme_recognition:
+            config.update("battle_theme_recognition", status)
+
+
+class SettingInputMotionCard(AppCard):
+    """设置项-输入运动"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.APPLICATION,
+            "平滑输入运动",
+            "启用中心偏向点击、平滑移动轨迹和有界随机等待；关闭后使用直线输入方式",
+            parent,
+        )
+
+        self.switch = SwitchButton(indicatorPos=IndicatorPosition.RIGHT)
+        self.switch.setOnText("启用")
+        self.switch.setOffText("禁用")
+        self.switch.setChecked(config.user.input_motion_enabled)
+        self.switch.checkedChanged.connect(self._config_update)
+        self.hBoxLayout.addWidget(self.switch)
+
+    def _config_update(self):
+        status = self.switch.isChecked()
+        if status != config.user.input_motion_enabled:
+            config.update("input_motion_enabled", status)
+
+
+class SettingRememberForceZoomCard(AppCard):
+    """设置项-强制缩放不再提醒"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.APPLICATION,
+            "强制缩放不再提醒",
+            "勾选后不再弹出强制缩放提示，并按上次的选择自动处理",
+            parent,
+        )
+
+        self.switch = SwitchButton(indicatorPos=IndicatorPosition.RIGHT)
+        self.switch.setOnText("启用")
+        self.switch.setOffText("禁用")
+        self.switch.setChecked(config.user.remember_force_zoom_choice)
+        self.switch.checkedChanged.connect(self._config_update)
+
+        self.hBoxLayout.addWidget(self.switch)
+
+    def _config_update(self):
+        status = self.switch.isChecked()
+        if status != config.user.remember_force_zoom_choice:
+            config.update("remember_force_zoom_choice", status)
+
+
+class SettingForceZoomAcceptedCard(AppCard):
+    """设置项-强制缩放方式（启用“不再提醒”后按此选择自动处理）"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.ZOOM,
+            "强制缩放方式",
+            "启用“强制缩放不再提醒”后，按此选择自动处理",
+            parent,
+        )
+
+        self.combobox = ComboBox()
+        self.combobox.addItems(["接受缩放", "拒绝缩放"])
+        self.combobox.setCurrentIndex(0 if config.user.force_zoom_accepted else 1)
+        self.combobox.setFixedWidth(120)
+        self.combobox.currentIndexChanged.connect(self._config_update)
+
+        self.hBoxLayout.addWidget(self.combobox)
+
+    def _config_update(self):
+        accepted = self.combobox.currentIndex() == 0
+        if accepted != config.user.force_zoom_accepted:
+            config.update("force_zoom_accepted", accepted)
+
+
+class SettingInteractionModeCard(ExpandGroupSettingCard):
+    """设置项-交互模式"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.APPLICATION,
+            "交互模式",
+            "",
+            parent,
+        )
+
+        self.mode_combobox = ComboBox()
+        self.mode_combobox.addItems(default_config.interaction_mode["mode"])
+        self.mode_combobox.setFixedWidth(120)
+        self.mode_combobox.currentIndexChanged.connect(self._config_update)
+
+        self.frontend_force_window_switch = SwitchButton()
+        self.frontend_force_window_switch.setOnText("")
+        self.frontend_force_window_switch.setOffText("")
+        self.frontend_force_window_switch.setChecked(default_config.interaction_mode["frontend"]["force_window"][0])
+        self.frontend_force_window_switch.checkedChanged.connect(self._config_update_frontend_force_window)
+
+        self.backend_prevent_sleep_switch = SwitchButton()
+        self.backend_prevent_sleep_switch.setOnText("")
+        self.backend_prevent_sleep_switch.setOffText("")
+        self.backend_prevent_sleep_switch.setChecked(default_config.interaction_mode["backend"]["prevent_sleep"][0])
+        self.backend_prevent_sleep_switch.checkedChanged.connect(self._config_update_backend_prevent_sleep)
+
+        self.backend_screenshot_combobox = ComboBox()
+        self.backend_screenshot_combobox.addItems(default_config.interaction_mode["backend"]["screenshot_method"])
+        self.backend_screenshot_combobox.currentIndexChanged.connect(self._config_update_backend_screenshot_method)
+
+        self.viewLayout.setContentsMargins(0, 0, 0, 0)
+        self.viewLayout.setSpacing(0)
+
+        self.addGroup(FluentIcon.APPLICATION, "交互模式", "", self.mode_combobox)
+        self.addGroup(FluentIcon.APPLICATION, "前台运行时前置游戏窗口", "", self.frontend_force_window_switch)
+        self.addGroup(FluentIcon.APPLICATION, "后台运行时禁止系统休眠", "", self.backend_prevent_sleep_switch)
+        self.addGroup(
+            FluentIcon.APPLICATION,
+            "后台截图模式",
+            "切换后可在窗口管理处预览是否能够正常截图显示",
+            self.backend_screenshot_combobox,
+        )
+
+        self.setExpand(True)
+
+        text = self.mode_combobox.currentText()
+        disabled = True if text == InteractionMode.FRONTEND else False
+        self.frontend_force_window_switch.setDisabled(not disabled)
+        self.backend_prevent_sleep_switch.setDisabled(disabled)
+        self.backend_screenshot_combobox.setDisabled(disabled)
+
+    def _config_update(self):
+        text = self.mode_combobox.currentText()
+        disabled = True if text == InteractionMode.FRONTEND else False
+        self.frontend_force_window_switch.setDisabled(not disabled)
+        self.backend_prevent_sleep_switch.setDisabled(disabled)
+        self.backend_screenshot_combobox.setDisabled(disabled)
+        if text != config.user.interaction_mode.mode:
+            config.update("interaction_mode.mode", text)
+
+    def _config_update_frontend_force_window(self):
+        status = self.frontend_force_window_switch.isChecked()
+        if status != config.user.interaction_mode.frontend.force_window:
+            config.update("interaction_mode.frontend.force_window", status)
+
+    def _config_update_backend_prevent_sleep(self):
+        status = self.backend_prevent_sleep_switch.isChecked()
+        if status != config.user.interaction_mode.backend.prevent_sleep:
+            config.update("interaction_mode.backend.prevent_sleep", status)
+
+    def _config_update_backend_screenshot_method(self):
+        text = self.backend_screenshot_combobox.currentText()
+        if text != config.user.interaction_mode.backend.screenshot_method:
+            config.update("interaction_mode.backend.screenshot_method", text)
+
+
+class SettingUpdateCard(ExpandGroupSettingCard):
+    """设置项-软件更新"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.UPDATE,
+            "软件更新",
+            "",
+            parent,
+        )
+
+        self.mode_switch = SwitchButton(indicatorPos=IndicatorPosition.RIGHT)  # 文本在左侧
+        self.mode_switch.setOnText("自动更新")
+        self.mode_switch.setOffText("关闭更新")
+        self.mode_switch.setChecked(default_config.auto_update)
+        self.mode_switch.checkedChanged.connect(self._config_update)
+
+        self.download_combobox = ComboBox()
+        self.download_combobox.addItems(default_config.update_download)
+        self.download_combobox.setFixedWidth(135)
+        self.download_combobox.currentIndexChanged.connect(self._config_update)
+
+        self.viewLayout.setContentsMargins(0, 0, 0, 0)
+        self.viewLayout.setSpacing(0)
+
+        self.addGroup(FluentIcon.UPDATE, "自动更新", "在应用程序启动时检查更新", self.mode_switch)
+        self.addGroup(FluentIcon.DOWNLOAD, "下载站点", "使用镜像源可加快下载速度", self.download_combobox)
+
+    def _config_update(self):
+        status = self.mode_switch.isChecked()
+        if status != config.user.auto_update:
+            config.update("auto_update", status)
+
+        text = self.download_combobox.currentText()
+        if text != config.user.update_download:
+            config.update("update_download", text)
+
+
+class SettingFunctionSelectorCard(AppCard):
+    """设置项-功能排序"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.VIEW,
+            "功能排序",
+            "功能太多找不到？点击按钮配置常用功能",
+            parent,
+        )
+
+        self.open_button = PushButton("配置")
+        self.open_button.clicked.connect(self._open_function_selector)
+
+        self.hBoxLayout.addWidget(self.open_button)
+
+    def _open_function_selector(self):
+        self.game_function_selector = GameFunctionSelectorWidget()
+        self.game_function_selector.applied.connect(self._on_function_order_applied)
+        self.game_function_selector.show()
+
+    def _on_function_order_applied(self):
+        """功能排序应用后，刷新首页的下拉框与高级设置"""
+        window = self.window()
+        if hasattr(window, "homeInterface"):
+            window.homeInterface.refresh_function_list()
+
+
+class SettingAboutCard(QWidget):
+    """设置项-关于"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.home_page_label = HyperlinkLabel("项目主页")
+        self.home_page_label.setUrl(HOME_PAGE_LINK)
+        self.help_doc_label = HyperlinkLabel("帮助文档")
+        self.help_doc_label.setUrl(HELP_DOC_LINK)
+        self.qq_group_label = HyperlinkLabel("QQ群")
+        self.qq_group_label.setUrl(QQ_GROUP_LINK)
+
+        self.short_cut_button = PushButton("创建快捷方式")
+        self.app_restart_button = PushButton("重启应用程序")
+        self.update_record_button = PushButton("查看更新记录")
+        self.announcement_button = PushButton("查看公告")
+
+        self.hBoxLayout1 = QHBoxLayout()
+        self.hBoxLayout1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hBoxLayout1.addWidget(self.short_cut_button)
+        self.hBoxLayout1.addWidget(self.app_restart_button)
+        self.hBoxLayout1.addWidget(self.update_record_button)
+        self.hBoxLayout1.addWidget(self.announcement_button)
+
+        self.hBoxLayout2 = QHBoxLayout()
+        self.hBoxLayout2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hBoxLayout2.addWidget(self.home_page_label)
+        self.hBoxLayout2.addWidget(BodyLabel("|"))
+        self.hBoxLayout2.addWidget(self.help_doc_label)
+        self.hBoxLayout2.addWidget(BodyLabel("|"))
+        self.hBoxLayout2.addWidget(self.qq_group_label)
+
+        self.vBoxLayout = QVBoxLayout(self)
+        self.vBoxLayout.addLayout(self.hBoxLayout1)
+        self.vBoxLayout.addLayout(self.hBoxLayout2)
+
+
+class SettingWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.setObjectName("Setting")
+
+        self.setting_label = SubtitleLabel("设置")
+        font = self.setting_label.font()
+        font.setWeight(QFont.Weight.Normal)  # 字体不加粗
+        self.setting_label.setFont(font)
+
+        self.language_card = SettingLanguageCard()
+        self.xuanshangfengyin_card = SettingXuanshangfengyinCard()
+        self.battle_theme_card = SettingBattleThemeCard()
+        self.input_motion_card = SettingInputMotionCard()
+        self.remember_force_zoom_card = SettingRememberForceZoomCard()
+        self.force_zoom_accepted_card = SettingForceZoomAcceptedCard()
+        self.interaction_mode_card = SettingInteractionModeCard()
+        self.remember_last_choice_card = SettingRememberLastChoiceCard()
+        self.function_selector_card = SettingFunctionSelectorCard()
+        self.shortcut_start_stop_card = SettingShortcutStartStopCard()
+        self.logger_color_card = SettingLoggerColorCard()
+        self.win_toast_card = SettingWinToastCard()
+        self.group_update = SettingUpdateCard()
+
+        self.about_label = SubtitleLabel("关于")
+        font = self.about_label.font()
+        font.setWeight(QFont.Weight.Normal)  # 字体不加粗
+        self.about_label.setFont(font)
+        self.about_card = SettingAboutCard()
+
+        self._widget = QWidget()
+        self._layout = QVBoxLayout(self._widget)
+        self._layout.addWidget(self.setting_label)
+        self._layout.addWidget(self.language_card)
+        self._layout.addWidget(self.xuanshangfengyin_card)
+        self._layout.addWidget(self.battle_theme_card)
+        self._layout.addWidget(self.input_motion_card)
+        self._layout.addWidget(self.remember_force_zoom_card)
+        self._layout.addWidget(self.force_zoom_accepted_card)
+        self._layout.addWidget(self.interaction_mode_card)
+        self._layout.addWidget(self.remember_last_choice_card)
+        self._layout.addWidget(self.function_selector_card)
+        self._layout.addWidget(self.shortcut_start_stop_card)
+        self._layout.addWidget(self.logger_color_card)
+        self._layout.addWidget(self.win_toast_card)
+        self._layout.addWidget(self.group_update)
+        self._layout.addWidget(self.about_label)
+        self._layout.addWidget(self.about_card)
+
+        self.scroll_area = ScrollArea()
+        self.scroll_area.setWidgetResizable(True)  # 使滚动区域可调整大小以适应内容
+        self.scroll_area.setWidget(self._widget)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.scroll_area)
+
+    def refresh_force_zoom(self):
+        """刷新强制缩放相关设置卡片，使其与当前配置同步"""
+        self.remember_force_zoom_card.switch.setChecked(config.user.remember_force_zoom_choice)
+        self.force_zoom_accepted_card.combobox.setCurrentIndex(0 if config.user.force_zoom_accepted else 1)

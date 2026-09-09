@@ -1,0 +1,61 @@
+{
+    "current_path": "douji",
+    "ocr_data": [
+        {
+            "name": "title",
+            "keyword": "斗技",
+            "region": [0, 0, 0, 0],
+            "score": "0.7",
+            "method": "PERFACT"
+        },
+        {
+            "name": "fight",
+            "keyword": "战",
+            "region": [0, 0, 0, 0],
+            "score": "0.5",
+            "method": "PERFACT"
+        },
+        {
+            "name" : "auto",
+            "keyword" : "自动",
+            "region": [0, 80, 100, 100],
+            "score": "0.7",
+            "method": "PERFACT"
+        },
+        {
+            "name": "cancel",
+            "keyword": "取消",
+            "region": [0, 0, 0, 0],
+            "score": "0.7",
+            "method": "PERFACT"
+        },
+        {
+            "name": "intentional",
+            "keyword": "手动",
+            "region": [0, 0, 0, 0],
+            "score": "0.7",
+            "method": "PERFACT"
+        },
+        {
+            "name": "victory",
+            "keyword": "胜利",
+            "region": [0, 0, 0, 0],
+            "score": "0.5",
+            "method": "PERFACT"
+        },
+        {
+            "name": "fail",
+            "keyword": "失败",
+            "region": [0, 0, 0, 0],
+            "score": "0.7",
+            "method": "PERFACT"
+        },
+        {
+            "name": "level_up",
+            "keyword": "段位上升",
+            "region": [0, 0, 0, 0],
+            "score": "0.7",
+            "method": "PERFACT"
+        }
+    ]
+}
