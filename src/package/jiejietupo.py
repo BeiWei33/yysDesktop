@@ -342,11 +342,14 @@ class JieJieTuPoGeRen(JieJieTuPo):
                     continue
 
                 try:
+                    # 阵容未锁定时会停留在准备界面，进攻前确认锁定状态
+                    self.ensure_lineup_locked()
                     self.fighting_into(x, y)
                 except JieJieTuPoTargetUnavailable:
                     logger.ui_warn(f"第{barrier_index}个结界状态已变化，重新扫描")
                     return
 
+                self.start_battle_from_ready_screen()
                 flag_victory = self.check_finish()
 
                 sleep()
@@ -403,6 +406,36 @@ class JieJieTuPoGeRen(JieJieTuPo):
                 sleep(0.4, 0.8)
 
         raise JieJieTuPoLineupStateError("无法确认阵容已锁定，请手动锁定阵容")
+
+    def start_battle_from_ready_screen(self, max_attempts: int = 10) -> bool:
+        """兜底处理准备界面
+
+        阵容未锁定时点击进攻会停留在准备界面，游戏不会自动进入战斗，
+        战斗结算识别将一直等待，因此在准备界面直接点击准备。
+
+        参数:
+            max_attempts (int): 最大检查次数
+
+        Returns:
+            bool: True 表示识别到准备界面并已点击准备
+        """
+        for _ in range(max_attempts):
+            if bool(event_thread):
+                raise GUIStopException
+
+            # 同一帧截图用于新旧准备按钮识别
+            screenshot = ScreenShot()
+            for asset in (self.global_assets.IMAGE_READY_NEW, self.global_assets.IMAGE_READY_OLD):
+                result = RuleImage(asset)
+                if result.match(screenshot):
+                    logger.ui_warn("阵容未锁定，识别到准备界面，点击准备进入战斗")
+                    Mouse.click(result.center_point())
+                    sleep(2, 3)
+                    return True
+
+            sleep(0.4, 0.8)
+
+        return False
 
     def wait_for_ready(self, max_attempts: int = 30) -> bool:
         """有限等待准备界面，并在同一帧兼容新旧准备按钮。"""
@@ -573,11 +606,14 @@ class JieJieTuPoGeRen(JieJieTuPo):
                     continue
 
                 self.check_scene(self.IMAGE_FANGSHOUJILU)
+                # 阵容未锁定时点击进攻会停留在准备界面，进攻前确认锁定状态
+                self.ensure_lineup_locked()
                 logger.ui(f"{i} 可进攻")
                 self.fighting_into(
                     self.tupo_geren_x[(i + 2) % 3 + 1],
                     self.tupo_geren_y[(i + 2) // 3],
                 )
+                self.start_battle_from_ready_screen()
 
                 # 只有成功才会退出
                 while True:

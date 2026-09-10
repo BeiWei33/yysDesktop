@@ -40,6 +40,8 @@ def _make_runner(monkeypatch, success_after_fight: bool):
     runner.fighting_into = fighting_into
     runner.check_finish = lambda: False
     runner.done = lambda: completed.append(True)
+    runner.ensure_lineup_locked = lambda: None
+    runner.start_battle_from_ready_screen = lambda: False
 
     monkeypatch.setattr(jiejietupo_module, "RuleImage", FakeRuleImage)
     monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
@@ -75,6 +77,92 @@ def test_fighting_returns_to_rescan_when_target_is_no_longer_clickable(monkeypat
     runner.fighting()
 
     assert completed == []
+
+
+def test_fighting_locks_lineup_before_attacking(monkeypatch):
+    runner, _, _ = _make_runner(monkeypatch, success_after_fight=False)
+    events = []
+
+    runner.ensure_lineup_locked = lambda: events.append(("lock",))
+    runner.fighting_into = lambda x, y: events.append(("attack", x, y))
+    runner.start_battle_from_ready_screen = lambda: events.append(("ready",))
+
+    runner.fighting()
+
+    assert events == [("lock",), ("attack", 215, 140), ("ready",)]
+
+
+def test_fighting_does_not_attack_when_lineup_state_is_unknown(monkeypatch):
+    runner, _, _ = _make_runner(monkeypatch, success_after_fight=False)
+    # 移除默认桩，验证真实的阵容锁定检查
+    del runner.ensure_lineup_locked
+    runner.get_lineup_state = lambda: (LineupState.NONE, None)
+    runner.fighting_into = lambda *args: (_ for _ in ()).throw(RuntimeError("unexpected attack"))
+    monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
+
+    with pytest.raises(JieJieTuPoLineupStateError, match="无法确认阵容已锁定"):
+        runner.fighting()
+
+
+def test_start_battle_from_ready_screen_clicks_prepare_when_lineup_unlocked(monkeypatch):
+    ready_new = object()
+    prepare_point = object()
+    runner = object.__new__(JieJieTuPoGeRen)
+    runner.global_assets = SimpleNamespace(
+        IMAGE_READY_NEW=ready_new,
+        IMAGE_READY_OLD=object(),
+    )
+    clicks = []
+
+    class FakeRuleImage:
+        def __init__(self, asset):
+            self.asset = asset
+
+        def match(self, *args, **kwargs):
+            return self.asset is ready_new
+
+        def center_point(self):
+            return prepare_point
+
+    monkeypatch.setattr(jiejietupo_module, "RuleImage", FakeRuleImage)
+    monkeypatch.setattr(jiejietupo_module, "ScreenShot", lambda: object())
+    monkeypatch.setattr(jiejietupo_module, "Mouse", SimpleNamespace(click=clicks.append))
+    monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
+
+    assert runner.start_battle_from_ready_screen(max_attempts=2)
+    assert clicks == [prepare_point]
+
+
+def test_start_battle_from_ready_screen_is_bounded_when_battle_already_started(monkeypatch):
+    runner = object.__new__(JieJieTuPoGeRen)
+    runner.global_assets = SimpleNamespace(
+        IMAGE_READY_NEW=object(),
+        IMAGE_READY_OLD=object(),
+    )
+    screenshots = []
+
+    class FakeRuleImage:
+        def __init__(self, asset):
+            self.asset = asset
+
+        def match(self, *args, **kwargs):
+            return False
+
+    def screenshot():
+        screenshots.append(True)
+        return object()
+
+    monkeypatch.setattr(jiejietupo_module, "RuleImage", FakeRuleImage)
+    monkeypatch.setattr(jiejietupo_module, "ScreenShot", screenshot)
+    monkeypatch.setattr(
+        jiejietupo_module.Mouse,
+        "click",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("unexpected prepare click")),
+    )
+    monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
+
+    assert not runner.start_battle_from_ready_screen(max_attempts=2)
+    assert len(screenshots) == 2
 
 
 def test_proactive_failure_does_not_attack_when_lineup_state_is_unknown(monkeypatch):
@@ -241,6 +329,33 @@ def test_level_failure_resolution_stops_after_bounded_attempts(monkeypatch):
     assert checked == [finish, fight_again, finish, fight_again]
 
 
+def test_level_task_locks_lineup_before_attacking(monkeypatch):
+    runner = object.__new__(JieJieTuPoGeRen)
+    runner.n = 0
+    runner.max = 1
+    runner.flag_keep_level = False
+    runner.list_xunzhang = [0, 0, -1, -1, -1, -1, -1, -1, -1, -1]
+    runner.IMAGE_FANGSHOUJILU = object()
+    runner.tupo_geren_x = {1: 100, 2: 200, 3: 300}
+    runner.tupo_geren_y = {1: 100, 2: 200, 3: 300}
+    events = []
+
+    runner.check_scene = lambda *args, **kwargs: True
+    runner.ensure_lineup_locked = lambda: events.append(("lock",))
+    runner.fighting_into = lambda x, y: events.append(("attack", x, y))
+    runner.start_battle_from_ready_screen = lambda: events.append(("ready",))
+    runner.check_finish = lambda: True
+    runner.done = lambda: setattr(runner, "n", runner.n + 1)
+    runner.global_assets = SimpleNamespace(IMAGE_FINISH=object())
+    runner.check_click = lambda *args, **kwargs: None
+    monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
+    monkeypatch.setattr(jiejietupo_module, "finish_random_left_right", lambda: None)
+
+    runner.level_task(0)
+
+    assert events == [("lock",), ("attack", 100, 100), ("ready",)]
+
+
 def test_level_task_moves_to_next_barrier_after_first_real_failure(monkeypatch):
     runner = object.__new__(JieJieTuPoGeRen)
     runner.n = 0
@@ -255,6 +370,8 @@ def test_level_task_moves_to_next_barrier_after_first_real_failure(monkeypatch):
     resolved_failures = []
 
     runner.check_scene = lambda *args, **kwargs: True
+    runner.ensure_lineup_locked = lambda: None
+    runner.start_battle_from_ready_screen = lambda: False
     runner.fighting_into = lambda x, y: attacks.append((x, y))
     runner.check_finish = lambda: next(outcomes)
     runner.resolve_level_failure = lambda: resolved_failures.append(True) or False
@@ -285,6 +402,8 @@ def test_level_task_does_not_revisit_failed_barriers_after_one_pass(monkeypatch)
     attacks = []
 
     runner.check_scene = lambda *args, **kwargs: True
+    runner.ensure_lineup_locked = lambda: None
+    runner.start_battle_from_ready_screen = lambda: False
     runner.fighting_into = lambda x, y: attacks.append((x, y))
     runner.check_finish = lambda: next(outcomes)
     runner.resolve_level_failure = lambda: False
