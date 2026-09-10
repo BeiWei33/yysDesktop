@@ -12,6 +12,7 @@ from ..utils.image import RuleImage
 from ..utils.log import logger
 from ..utils.paddleocr import RuleOcr
 from ..utils.point import Point
+from ..utils.screenshot import ScreenShot
 from .base_package import BasePackage
 
 
@@ -29,6 +30,22 @@ class LiaoTuPoFullException(CustomException):
     def __init__(self, *args):
         super().__init__(*args)
         logger.ui_warn("异常捕获：寮突破已满")
+
+
+class JieJieTuPoTargetUnavailable(Exception):
+    """目标结界已经进入不可挑战状态。"""
+
+
+class JieJieTuPoLineupStateError(CustomException):
+    """无法确认个人突破阵容的锁定状态。"""
+
+
+class JieJieTuPoReadyTimeout(CustomException):
+    """主动退级时未在限定时间内识别到准备界面。"""
+
+
+class JieJieTuPoBattleResultTimeout(CustomException):
+    """未能稳定确认卡级战斗的结算状态。"""
 
 
 class JieJieTuPo(BasePackage):
@@ -138,7 +155,7 @@ class JieJieTuPo(BasePackage):
                 return
 
         # 三次都没有点到结界
-        raise Exception("未点到结界")
+        raise JieJieTuPoTargetUnavailable("未点到结界")
 
     def fighting_proactive_failure_once(self):
         """主动失败一次"""
@@ -297,39 +314,51 @@ class JieJieTuPoGeRen(JieJieTuPo):
         return alist
 
     def fighting(self) -> None:
-        """战斗"""
-        for i in range(5, -1, -1):  # 按勋章数排序
+        """按勋章数进攻；一次扫描中每个结界最多尝试一次。"""
+        for medal_count in range(5, -1, -1):  # 按勋章数排序
             if bool(event_thread):
                 raise GUIStopException
 
-            if not self.list_xunzhang.count(i):
-                # 没有对应勋章数的结界，跳过
-                continue
-
-            k = 1
-            for _ in range(1, self.list_xunzhang.count(i) + 1):
+            barrier_indexes = [
+                index
+                for index, value in enumerate(self.list_xunzhang)
+                if index > 0 and value == medal_count
+            ]
+            for barrier_index in barrier_indexes:
                 if bool(event_thread):
                     raise GUIStopException
 
-                k = self.list_xunzhang.index(i, k)
-                logger.ui(f"{k} 可进攻")
-                x = self.tupo_geren_x[(k + 2) % 3 + 1]
-                y = self.tupo_geren_y[(k + 2) // 3]
-                if RuleImage(self.IMAGE_FAIL, region=(x, y - 40, 185 + 40, 90)).match():
-                    logger.ui(f"{k} 已失败")
-                    k += 1
+                logger.ui(f"{barrier_index} 可进攻")
+                x = self.tupo_geren_x[(barrier_index + 2) % 3 + 1]
+                y = self.tupo_geren_y[(barrier_index + 2) // 3]
+                terminal_region = (x, y - 40, 185 + 40, 90)
+                success_region = (x + 40, y - 10, 185 + 20, 90)
+
+                if RuleImage(self.IMAGE_FAIL, region=terminal_region).match():
+                    logger.ui(f"{barrier_index} 已失败")
+                    continue
+                if RuleImage(self.IMAGE_SUCCESS, region=success_region).match():
+                    logger.ui(f"{barrier_index} 已攻破")
                     continue
 
-                self.fighting_into(x, y)
+                try:
+                    self.fighting_into(x, y)
+                except JieJieTuPoTargetUnavailable:
+                    logger.ui_warn(f"第{barrier_index}个结界状态已变化，重新扫描")
+                    return
 
-                if self.check_finish():
-                    flag_victory = True
-                    self.done()
-                else:
-                    flag_victory = False
+                flag_victory = self.check_finish()
 
                 sleep()
                 finish_random_left_right()
+                sleep(2)
+
+                if not flag_victory and RuleImage(self.IMAGE_SUCCESS, region=success_region).match():
+                    logger.ui_warn(f"战斗结果纠正：第{barrier_index}个结界已攻破")
+                    flag_victory = True
+
+                if flag_victory:
+                    self.done()
 
                 # 3胜奖励
                 if self.tupo_victory == 2 and flag_victory:
@@ -344,9 +373,51 @@ class JieJieTuPoGeRen(JieJieTuPo):
                             break
                     logger.ui("成功攻破3次")
 
-                sleep(2)
                 if flag_victory:
                     return
+
+    def ensure_lineup_unlocked(self, max_attempts: int = 3) -> None:
+        """确认个人突破阵容已经解锁，未知状态下不开始挑战。"""
+        for attempt in range(max_attempts):
+            state, point = self.get_lineup_state()
+            if state == LineupState.UNLOCK:
+                return
+            if state == LineupState.LOCK and point is not None:
+                sleep()
+                Mouse.click(point)
+            if attempt < max_attempts - 1:
+                sleep(0.4, 0.8)
+
+        raise JieJieTuPoLineupStateError("无法确认阵容已解锁，请手动解锁阵容后重试")
+
+    def ensure_lineup_locked(self, max_attempts: int = 3) -> None:
+        """确认个人突破阵容已经重新锁定。"""
+        for attempt in range(max_attempts):
+            state, point = self.get_lineup_state()
+            if state == LineupState.LOCK:
+                return
+            if state == LineupState.UNLOCK and point is not None:
+                sleep()
+                Mouse.click(point)
+            if attempt < max_attempts - 1:
+                sleep(0.4, 0.8)
+
+        raise JieJieTuPoLineupStateError("无法确认阵容已锁定，请手动锁定阵容")
+
+    def wait_for_ready(self, max_attempts: int = 30) -> bool:
+        """有限等待准备界面，并在同一帧兼容新旧准备按钮。"""
+        for _ in range(max_attempts):
+            if bool(event_thread):
+                raise GUIStopException
+
+            screenshot = ScreenShot()
+            if RuleImage(self.global_assets.IMAGE_READY_NEW).match(screenshot):
+                return True
+            if RuleImage(self.global_assets.IMAGE_READY_OLD).match(screenshot):
+                return True
+            sleep(0.4, 0.8)
+
+        return False
 
     def fighting_proactive_failure(self, count_max) -> None:
         """主动失败
@@ -355,12 +426,7 @@ class JieJieTuPoGeRen(JieJieTuPo):
             count_max (int): 次数
         """
         count = 0
-        # 解锁阵容
-        state, point = self.get_lineup_state()
-        if state == LineupState.LOCK:  # TODO 3次检测机会
-            sleep()
-            Mouse.click(point)
-        # logger.ui("已解锁阵容")
+        self.ensure_lineup_unlocked()
         sleep()
 
         self.list_xunzhang = self.list_num_xunzhang(only_victory=True)
@@ -376,10 +442,8 @@ class JieJieTuPoGeRen(JieJieTuPo):
             if bool(event_thread):
                 raise GUIStopException
 
-            if (not self.check_scene(self.global_assets.IMAGE_READY_NEW)) and (
-                not self.check_scene(self.global_assets.IMAGE_READY_OLD)
-            ):
-                continue
+            if not self.wait_for_ready():
+                raise JieJieTuPoReadyTimeout("未识别到准备界面，已停止主动退级")
 
             sleep(3)
             self.fighting_proactive_failure_once()
@@ -396,10 +460,9 @@ class JieJieTuPoGeRen(JieJieTuPo):
             KeyBoard.enter()
 
         sleep(2)
-        self.check_scene(self.IMAGE_FANGSHOUJILU)
-        state, point = self.get_lineup_state()
-        sleep()
-        Mouse.click(point)
+        if not self.check_scene(self.IMAGE_FANGSHOUJILU, timeout=15):
+            raise JieJieTuPoReadyTimeout("主动退级结束后未返回个人突破页面")
+        self.ensure_lineup_locked()
         logger.ui("已锁定阵容")
         sleep()
 
@@ -459,6 +522,26 @@ class JieJieTuPoGeRen(JieJieTuPo):
                 logger.ui_warn("暂不支持大于3个，请自行处理")
                 return
 
+    def resolve_level_failure(self, max_attempts: int = 30) -> bool:
+        """稳定失败结果：纠正假失败，或在真失败时开始再次挑战。"""
+        for _ in range(max_attempts):
+            if bool(event_thread):
+                raise GUIStopException
+
+            screenshot = ScreenShot()
+            if RuleImage(self.global_assets.IMAGE_FINISH).match(screenshot):
+                logger.ui_warn("战斗结果纠正：实际为胜利")
+                return True
+
+            if RuleImage(self.IMAGE_FIGHT_AGAIN).match(screenshot):
+                logger.ui_warn("战斗失败，不重试当前结界")
+                finish_random_left_right()
+                return False
+
+            sleep(0.4, 0.8)
+
+        raise JieJieTuPoBattleResultTimeout("未识别到胜利结算或再次挑战，已停止卡级任务")
+
     def level_task(self, lower_level_count: int):
         while self.n < self.max:
             if bool(event_thread):
@@ -501,22 +584,29 @@ class JieJieTuPoGeRen(JieJieTuPo):
                     if bool(event_thread):
                         raise GUIStopException
 
-                    # TODO 失败超过一定次数视为打不过
-                    if self.check_finish():
+                    flag_victory = self.check_finish()
+                    if not flag_victory:
+                        flag_victory = self.resolve_level_failure()
+
+                    if flag_victory:
                         self.done()
                         self.tupo_victory += 1
                         sleep()
                         finish_random_left_right()
-                        break
                     else:
-                        self.check_click(self.IMAGE_FIGHT_AGAIN)
-                        sleep()
-                        KeyBoard.enter()
+                        logger.ui_warn(f"第{i}个结界战斗失败，跳过")
+                    break
 
                 sleep(4)
                 if self.tupo_victory in [3, 6, 9]:
                     self.check_click(self.global_assets.IMAGE_FINISH)
                     sleep(2)
+
+            if self.n < self.max:
+                logger.ui_warn(
+                    f"本轮可进攻结界已全部处理，完成{self.n}/{self.max}次"
+                )
+                return
 
     def run(self):
         # 卡57级和刷新规则互斥
