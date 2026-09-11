@@ -7,6 +7,8 @@ from src.package.jiejietupo import (
     JieJieTuPo,
     JieJieTuPoGeRen,
     JieJieTuPoLineupStateError,
+    JieJieTuPoReadyTimeout,
+    JieJieTuPoTargetUnavailable,
     LineupState,
 )
 
@@ -38,7 +40,7 @@ def _make_runner(monkeypatch, success_after_fight: bool):
             return False
 
     runner.fighting_into = fighting_into
-    runner.check_finish = lambda: False
+    runner.check_finish = lambda *args, **kwargs: False
     runner.done = lambda: completed.append(True)
     runner.ensure_lineup_locked = lambda: None
     runner.start_battle_from_ready_screen = lambda: False
@@ -340,11 +342,11 @@ def test_level_task_locks_lineup_before_attacking(monkeypatch):
     runner.tupo_geren_y = {1: 100, 2: 200, 3: 300}
     events = []
 
-    runner.check_scene = lambda *args, **kwargs: True
+    runner.back_to_barrier_list = lambda: events.append(("list",))
     runner.ensure_lineup_locked = lambda: events.append(("lock",))
     runner.fighting_into = lambda x, y: events.append(("attack", x, y))
     runner.start_battle_from_ready_screen = lambda: events.append(("ready",))
-    runner.check_finish = lambda: True
+    runner.check_finish = lambda *args, **kwargs: True
     runner.done = lambda: setattr(runner, "n", runner.n + 1)
     runner.global_assets = SimpleNamespace(IMAGE_FINISH=object())
     runner.check_click = lambda *args, **kwargs: None
@@ -353,7 +355,7 @@ def test_level_task_locks_lineup_before_attacking(monkeypatch):
 
     runner.level_task(0)
 
-    assert events == [("lock",), ("attack", 100, 100), ("ready",)]
+    assert events == [("list",), ("lock",), ("attack", 100, 100), ("ready",)]
 
 
 def test_level_task_moves_to_next_barrier_after_first_real_failure(monkeypatch):
@@ -369,11 +371,11 @@ def test_level_task_moves_to_next_barrier_after_first_real_failure(monkeypatch):
     attacks = []
     resolved_failures = []
 
-    runner.check_scene = lambda *args, **kwargs: True
+    runner.back_to_barrier_list = lambda: None
     runner.ensure_lineup_locked = lambda: None
     runner.start_battle_from_ready_screen = lambda: False
     runner.fighting_into = lambda x, y: attacks.append((x, y))
-    runner.check_finish = lambda: next(outcomes)
+    runner.check_finish = lambda *args, **kwargs: next(outcomes)
     runner.resolve_level_failure = lambda: resolved_failures.append(True) or False
 
     def done():
@@ -389,7 +391,7 @@ def test_level_task_moves_to_next_barrier_after_first_real_failure(monkeypatch):
     assert resolved_failures == [True]
 
 
-def test_level_task_does_not_revisit_failed_barriers_after_one_pass(monkeypatch):
+def test_level_task_refreshes_list_after_one_pass(monkeypatch):
     runner = object.__new__(JieJieTuPoGeRen)
     runner.n = 0
     runner.max = 1
@@ -400,14 +402,24 @@ def test_level_task_does_not_revisit_failed_barriers_after_one_pass(monkeypatch)
     runner.tupo_geren_y = {1: 100, 2: 200, 3: 300}
     outcomes = iter([False, False, True])
     attacks = []
+    refreshed = []
 
-    runner.check_scene = lambda *args, **kwargs: True
+    runner.back_to_barrier_list = lambda: None
     runner.ensure_lineup_locked = lambda: None
     runner.start_battle_from_ready_screen = lambda: False
     runner.fighting_into = lambda x, y: attacks.append((x, y))
-    runner.check_finish = lambda: next(outcomes)
+    runner.check_finish = lambda *args, **kwargs: next(outcomes)
     runner.resolve_level_failure = lambda: False
     runner.done = lambda: setattr(runner, "n", runner.n + 1)
+    runner.global_assets = SimpleNamespace(IMAGE_FINISH=object())
+    runner.check_click = lambda *args, **kwargs: None
+    runner.list_num_xunzhang = lambda **kwargs: [0, 0, 0, -1, -1, -1, -1, -1, -1, -1]
+
+    def refresh():
+        refreshed.append(True)
+        runner.max = runner.n  # 结束循环，便于断言
+
+    runner.refresh = refresh
     monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
     monkeypatch.setattr(jiejietupo_module, "finish_random_left_right", lambda: None)
 
@@ -415,3 +427,226 @@ def test_level_task_does_not_revisit_failed_barriers_after_one_pass(monkeypatch)
 
     assert runner.n == 0
     assert attacks == [(100, 100), (200, 100)]
+    assert refreshed == [True]
+
+
+def test_level_task_rescans_when_barrier_state_changed(monkeypatch):
+    runner = object.__new__(JieJieTuPoGeRen)
+    runner.n = 0
+    runner.max = 1
+    runner.flag_keep_level = False
+    runner.list_xunzhang = [0, 0, -1, -1, -1, -1, -1, -1, -1, -1]
+    runner.IMAGE_FANGSHOUJILU = object()
+    runner.tupo_geren_x = {1: 100, 2: 200, 3: 300}
+    runner.tupo_geren_y = {1: 100, 2: 200, 3: 300}
+    attempts = []
+    scans = []
+
+    def fighting_into(x, y):
+        attempts.append((x, y))
+        if len(attempts) == 1:
+            raise JieJieTuPoTargetUnavailable("未点到结界")
+
+    runner.back_to_barrier_list = lambda: None
+    runner.ensure_lineup_locked = lambda: None
+    runner.fighting_into = fighting_into
+    runner.start_battle_from_ready_screen = lambda: False
+    runner.check_finish = lambda *args, **kwargs: True
+    runner.done = lambda: setattr(runner, "n", runner.n + 1)
+    runner.global_assets = SimpleNamespace(IMAGE_FINISH=object())
+    runner.check_click = lambda *args, **kwargs: None
+    runner.list_num_xunzhang = lambda **kwargs: scans.append(True) or [0, 0, -1, -1, -1, -1, -1, -1, -1, -1]
+    monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
+    monkeypatch.setattr(jiejietupo_module, "finish_random_left_right", lambda: None)
+
+    runner.level_task(0)
+
+    assert attempts == [(100, 100), (100, 100)]
+    assert scans == [True]
+    assert runner.n == 1
+
+
+def test_level_task_stops_when_no_barrier_is_attackable(monkeypatch):
+    runner = object.__new__(JieJieTuPoGeRen)
+    runner.n = 0
+    runner.max = 5
+    runner.flag_keep_level = False
+    runner.list_xunzhang = [0] + [-1] * 9
+    runner.IMAGE_FANGSHOUJILU = object()
+    runner.tupo_geren_x = {1: 100, 2: 200, 3: 300}
+    runner.tupo_geren_y = {1: 100, 2: 200, 3: 300}
+    refreshed = []
+    errors = []
+
+    runner.back_to_barrier_list = lambda: None
+    runner.ensure_lineup_locked = lambda: None
+    runner.fighting_into = lambda *args: (_ for _ in ()).throw(RuntimeError("unexpected attack"))
+    runner.list_num_xunzhang = lambda **kwargs: [0] + [-1] * 9
+    runner.refresh = lambda: refreshed.append(True)
+    monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
+    monkeypatch.setattr(jiejietupo_module.logger, "ui_error", errors.append)
+
+    runner.level_task(0)
+
+    assert len(refreshed) == JieJieTuPoGeRen.max_no_progress_refresh
+    assert errors == ["没有可进攻的结界，已停止结界突破"]
+
+
+def test_back_to_barrier_list_returns_immediately_when_list_is_visible(monkeypatch):
+    fangshoujilu = object()
+    runner = object.__new__(JieJieTuPoGeRen)
+    runner.IMAGE_FANGSHOUJILU = fangshoujilu
+    runner.global_assets = SimpleNamespace(IMAGE_FINISH=object())
+    esc_calls = []
+
+    class FakeRuleImage:
+        def __init__(self, asset):
+            self.asset = asset
+
+        def match(self, *args, **kwargs):
+            return self.asset is fangshoujilu
+
+    monkeypatch.setattr(jiejietupo_module, "RuleImage", FakeRuleImage)
+    monkeypatch.setattr(jiejietupo_module.KeyBoard, "esc", lambda: esc_calls.append(True))
+    monkeypatch.setattr(
+        jiejietupo_module.Mouse,
+        "click",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("unexpected dismiss click")),
+    )
+    monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
+
+    runner.back_to_barrier_list()
+
+    assert esc_calls == []
+
+
+def test_back_to_barrier_list_recovers_from_battle_settlement(monkeypatch):
+    fangshoujilu = object()
+    finish = object()
+    finish_point = object()
+    list_checks = []
+    esc_calls = []
+    clicks = []
+    runner = object.__new__(JieJieTuPoGeRen)
+    runner.IMAGE_FANGSHOUJILU = fangshoujilu
+    runner.global_assets = SimpleNamespace(IMAGE_FINISH=finish)
+
+    class FakeRuleImage:
+        def __init__(self, asset):
+            self.asset = asset
+
+        def match(self, *args, **kwargs):
+            if self.asset is fangshoujilu:
+                list_checks.append(True)
+                # 第一次退出结算界面后才回到列表页
+                return len(list_checks) >= 2
+            return self.asset is finish
+
+        def center_point(self):
+            return finish_point
+
+    monkeypatch.setattr(jiejietupo_module, "RuleImage", FakeRuleImage)
+    monkeypatch.setattr(jiejietupo_module.KeyBoard, "esc", lambda: esc_calls.append(True))
+    monkeypatch.setattr(jiejietupo_module.Mouse, "click", clicks.append)
+    monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
+
+    runner.back_to_barrier_list(wait_attempts=1)
+
+    assert esc_calls == [True]
+    assert clicks == [finish_point]
+    assert len(list_checks) == 2
+
+
+def test_back_to_barrier_list_stops_when_list_never_appears(monkeypatch):
+    fangshoujilu = object()
+    runner = object.__new__(JieJieTuPoGeRen)
+    runner.IMAGE_FANGSHOUJILU = fangshoujilu
+    runner.global_assets = SimpleNamespace(IMAGE_FINISH=object())
+    esc_calls = []
+
+    class FakeRuleImage:
+        def __init__(self, asset):
+            self.asset = asset
+
+        def match(self, *args, **kwargs):
+            return False
+
+    monkeypatch.setattr(jiejietupo_module, "RuleImage", FakeRuleImage)
+    monkeypatch.setattr(jiejietupo_module.KeyBoard, "esc", lambda: esc_calls.append(True))
+    monkeypatch.setattr(jiejietupo_module.Mouse, "click", lambda *args: None)
+    monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
+
+    with pytest.raises(JieJieTuPoReadyTimeout, match="未返回个人突破页面"):
+        runner.back_to_barrier_list(wait_attempts=1, max_attempts=2)
+
+    assert esc_calls == [True, True]
+
+
+def test_level_task_bounds_reward_click_when_reward_screen_is_absent(monkeypatch):
+    runner = object.__new__(JieJieTuPoGeRen)
+    runner.n = 0
+    runner.max = 1
+    runner.flag_keep_level = False
+    runner.list_xunzhang = [0, 0, -1, -1, -1, -1, -1, -1, -1, -1]
+    runner.IMAGE_FANGSHOUJILU = object()
+    runner.tupo_geren_x = {1: 100, 2: 200, 3: 300}
+    runner.tupo_geren_y = {1: 100, 2: 200, 3: 300}
+    click_calls = []
+
+    runner.back_to_barrier_list = lambda: None
+    runner.ensure_lineup_locked = lambda: None
+    runner.start_battle_from_ready_screen = lambda: False
+    runner.fighting_into = lambda x, y: None
+    runner.check_finish = lambda *args, **kwargs: True
+    runner.done = lambda: setattr(runner, "n", runner.n + 1)
+    runner.global_assets = SimpleNamespace(IMAGE_FINISH=object())
+    runner.check_click = lambda *args, **kwargs: click_calls.append(kwargs) or False
+    monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
+    monkeypatch.setattr(jiejietupo_module, "finish_random_left_right", lambda: None)
+
+    runner.level_task(0)
+
+    # 已完成 9 个结界（8 个已攻破 + 本次胜利），需要处理奖励界面且不能无限等待
+    assert "timeout" in click_calls[0]
+
+
+def test_fighting_reports_no_attack_when_all_barriers_failed(monkeypatch):
+    runner = object.__new__(JieJieTuPoGeRen)
+    runner.list_xunzhang = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    runner.tupo_victory = 0
+    runner.IMAGE_FAIL = object()
+    runner.IMAGE_SUCCESS = object()
+    runner.tupo_geren_x = {1: 100, 2: 200, 3: 300}
+    runner.tupo_geren_y = {1: 100, 2: 200, 3: 300}
+    runner.ensure_lineup_locked = lambda: None
+    runner.fighting_into = lambda *args: (_ for _ in ()).throw(RuntimeError("unexpected attack"))
+
+    class FakeRuleImage:
+        def __init__(self, asset, region=None):
+            self.asset = asset
+
+        def match(self, *args, **kwargs):
+            return self.asset is runner.IMAGE_FAIL
+
+    monkeypatch.setattr(jiejietupo_module, "RuleImage", FakeRuleImage)
+    monkeypatch.setattr(jiejietupo_module, "sleep", lambda *args, **kwargs: None)
+
+    assert runner.fighting() is False
+
+
+def test_refresh_task_refreshes_list_when_no_barrier_is_attackable(monkeypatch):
+    runner = object.__new__(JieJieTuPoGeRen)
+    runner.n = 0
+    runner.max = 10
+    runner.list_xunzhang = None
+    runner.list_num_xunzhang = lambda **kwargs: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    runner.fighting = lambda: False
+    refreshed = []
+    runner.refresh = lambda: refreshed.append(True)
+    errors = []
+    monkeypatch.setattr(jiejietupo_module.logger, "ui_error", errors.append)
+
+    runner.refresh_task()
+
+    assert len(refreshed) == JieJieTuPoGeRen.max_no_progress_refresh
+    assert errors == ["没有可进攻的结界，已停止结界突破"]

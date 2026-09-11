@@ -185,6 +185,10 @@ class JieJieTuPoGeRen(JieJieTuPo):
         2: 260,
         3: 380,
     }
+    battle_timeout: int = 180
+    """单场战斗结算识别超时时间，避免异常界面导致无限等待"""
+    max_no_progress_refresh: int = 3
+    """连续没有可进攻结界时允许的刷新次数"""
 
     @classmethod
     def get_level_list(cls) -> list[str]:
@@ -313,8 +317,13 @@ class JieJieTuPoGeRen(JieJieTuPo):
 
         return alist
 
-    def fighting(self) -> None:
-        """按勋章数进攻；一次扫描中每个结界最多尝试一次。"""
+    def fighting(self) -> bool:
+        """按勋章数进攻；一次扫描中每个结界最多尝试一次。
+
+        Returns:
+            bool: 本次扫描是否成功进攻了结界
+        """
+        attacked = False
         for medal_count in range(5, -1, -1):  # 按勋章数排序
             if bool(event_thread):
                 raise GUIStopException
@@ -347,10 +356,11 @@ class JieJieTuPoGeRen(JieJieTuPo):
                     self.fighting_into(x, y)
                 except JieJieTuPoTargetUnavailable:
                     logger.ui_warn(f"第{barrier_index}个结界状态已变化，重新扫描")
-                    return
+                    return attacked
 
+                attacked = True
                 self.start_battle_from_ready_screen()
-                flag_victory = self.check_finish()
+                flag_victory = self.check_finish(timeout=self.battle_timeout)
 
                 sleep()
                 finish_random_left_right()
@@ -377,7 +387,9 @@ class JieJieTuPoGeRen(JieJieTuPo):
                     logger.ui("成功攻破3次")
 
                 if flag_victory:
-                    return
+                    return True
+
+        return attacked
 
     def ensure_lineup_unlocked(self, max_attempts: int = 3) -> None:
         """确认个人突破阵容已经解锁，未知状态下不开始挑战。"""
@@ -436,6 +448,38 @@ class JieJieTuPoGeRen(JieJieTuPo):
             sleep(0.4, 0.8)
 
         return False
+
+    def back_to_barrier_list(self, wait_attempts: int = 10, max_attempts: int = 3) -> None:
+        """确认已经返回个人突破列表页
+
+        先有限等待列表页出现，仍不出现时再退出结算界面：战斗失败后可能停留在
+        结算界面，或被随机点击误入「再次挑战」，此时继续进攻会一直等待。
+
+        参数:
+            wait_attempts (int): 每轮等待列表页出现的检查次数
+            max_attempts (int): 最大恢复次数
+
+        Raises:
+            JieJieTuPoReadyTimeout: 始终无法返回个人突破列表页
+        """
+        for attempt in range(max_attempts):
+            for _ in range(wait_attempts):
+                if bool(event_thread):
+                    raise GUIStopException
+
+                if RuleImage(self.IMAGE_FANGSHOUJILU).match():
+                    return
+                sleep(0.4, 0.8)
+
+            logger.ui_warn(f"未返回个人突破页面，尝试退出（第{attempt + 1}次）")
+            KeyBoard.esc()
+            sleep()
+            result = RuleImage(self.global_assets.IMAGE_FINISH)
+            if result.match():
+                Mouse.click(result.center_point())
+            sleep(1, 2)
+
+        raise JieJieTuPoReadyTimeout("未返回个人突破页面，已停止结界突破任务")
 
     def wait_for_ready(self, max_attempts: int = 30) -> bool:
         """有限等待准备界面，并在同一帧兼容新旧准备按钮。"""
@@ -540,6 +584,7 @@ class JieJieTuPoGeRen(JieJieTuPo):
         self.fighting_proactive_failure(4)
 
     def refresh_task(self):
+        no_progress: int = 0
         while self.n < self.max:
             if bool(event_thread):
                 raise GUIStopException
@@ -550,7 +595,16 @@ class JieJieTuPoGeRen(JieJieTuPo):
                 self.refresh()
             elif self.tupo_victory < 3:
                 logger.ui(f"已攻破{self.tupo_victory}个")
-                self.fighting()
+                if self.fighting():
+                    no_progress = 0
+                else:
+                    # 没有可进攻的结界（全部已失败或已攻破），只能刷新列表
+                    no_progress += 1
+                    if no_progress > self.max_no_progress_refresh:
+                        logger.ui_error("没有可进攻的结界，已停止结界突破")
+                        return
+                    logger.ui_warn(f"没有可进攻的结界，刷新列表（第{no_progress}次）")
+                    self.refresh()
             elif self.tupo_victory > 3:
                 logger.ui_warn("暂不支持大于3个，请自行处理")
                 return
@@ -576,26 +630,30 @@ class JieJieTuPoGeRen(JieJieTuPo):
         raise JieJieTuPoBattleResultTimeout("未识别到胜利结算或再次挑战，已停止卡级任务")
 
     def level_task(self, lower_level_count: int):
+        # 降级次数由输入给定
+        for _ in range(lower_level_count):
+            lower_level_count -= 1
+            logger.ui(f"第{_}次降级")
+            self.lower_level()
+
+        # 保级
+        if self.flag_keep_level:
+            self.keep_level()
+        else:
+            self.flag_keep_level = True
+
+        no_progress: int = 0
         while self.n < self.max:
             if bool(event_thread):
                 raise GUIStopException
-
-            # 降级次数由输入给定
-            for _ in range(lower_level_count):
-                lower_level_count -= 1
-                logger.ui(f"第{_}次降级")
-                self.lower_level()
-
-            # 保级
-            if self.flag_keep_level:
-                self.keep_level()
-            else:
-                self.flag_keep_level = True
 
             # 获得每个结界的勋章数
             if self.list_xunzhang is None:
                 self.list_xunzhang = self.list_num_xunzhang(only_victory=True)
             self.tupo_victory = self.list_xunzhang.count(-1)  # 已经攻破的次数
+
+            attacked = False
+            rescan = False
 
             # 按顺序打九
             for i in range(1, len(self.list_xunzhang)):
@@ -605,14 +663,23 @@ class JieJieTuPoGeRen(JieJieTuPo):
                 if self.list_xunzhang[i] == -1:
                     continue
 
-                self.check_scene(self.IMAGE_FANGSHOUJILU)
+                # 战斗失败后可能停留在结算界面或误入再次挑战，先确认回到列表页
+                self.back_to_barrier_list()
                 # 阵容未锁定时点击进攻会停留在准备界面，进攻前确认锁定状态
                 self.ensure_lineup_locked()
                 logger.ui(f"{i} 可进攻")
-                self.fighting_into(
-                    self.tupo_geren_x[(i + 2) % 3 + 1],
-                    self.tupo_geren_y[(i + 2) // 3],
-                )
+                try:
+                    self.fighting_into(
+                        self.tupo_geren_x[(i + 2) % 3 + 1],
+                        self.tupo_geren_y[(i + 2) // 3],
+                    )
+                except JieJieTuPoTargetUnavailable:
+                    # 结界已失效或被抢，重新扫描列表
+                    logger.ui_warn(f"第{i}个结界状态已变化，重新扫描")
+                    rescan = True
+                    break
+
+                attacked = True
                 self.start_battle_from_ready_screen()
 
                 # 只有成功才会退出
@@ -620,7 +687,7 @@ class JieJieTuPoGeRen(JieJieTuPo):
                     if bool(event_thread):
                         raise GUIStopException
 
-                    flag_victory = self.check_finish()
+                    flag_victory = self.check_finish(timeout=self.battle_timeout)
                     if not flag_victory:
                         flag_victory = self.resolve_level_failure()
 
@@ -635,14 +702,37 @@ class JieJieTuPoGeRen(JieJieTuPo):
 
                 sleep(4)
                 if self.tupo_victory in [3, 6, 9]:
-                    self.check_click(self.global_assets.IMAGE_FINISH)
+                    if not self.check_click(self.global_assets.IMAGE_FINISH, timeout=10):
+                        logger.ui_warn("未识别到3/6/9胜奖励界面，跳过")
                     sleep(2)
 
-            if self.n < self.max:
-                logger.ui_warn(
-                    f"本轮可进攻结界已全部处理，完成{self.n}/{self.max}次"
-                )
+            if self.n >= self.max:
                 return
+
+            if rescan:
+                if attacked:
+                    no_progress = 0
+                else:
+                    no_progress += 1
+                if no_progress > self.max_no_progress_refresh:
+                    logger.ui_error("结界无法进攻，已停止结界突破")
+                    return
+                self.list_xunzhang = None
+                continue
+
+            # 当前列表已打完，刷新后继续，避免绘卷刷分空转
+            if attacked:
+                no_progress = 0
+                logger.ui_warn(f"本轮可进攻结界已全部处理，完成{self.n}/{self.max}次，刷新列表")
+            else:
+                no_progress += 1
+                if no_progress > self.max_no_progress_refresh:
+                    logger.ui_error("没有可进攻的结界，已停止结界突破")
+                    return
+                logger.ui_warn(f"没有可进攻的结界，刷新列表（第{no_progress}次）")
+
+            self.list_xunzhang = None
+            self.refresh()
 
     def run(self):
         # 卡57级和刷新规则互斥

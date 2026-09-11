@@ -66,16 +66,37 @@ class HuiJuan(BasePackage):
         else:
             logger.ui("当前不在探索入口处，无需关闭")
 
-    def get_current_number(self):
-        result = RuleOcr(region=(650, 0, 100, 55)).get_raw_result()
-        try:
+    def get_current_number(self, max_attempts: int = 3):
+        """识别突破券数量
+
+        Args:
+            max_attempts (int): 识别失败时的重试次数
+
+        Returns:
+            int: 突破券数量，未识别到时返回 -1
+        """
+        number = -1
+        for attempt in range(max_attempts):
+            if bool(event_thread):
+                raise GUIStopException
+
+            result = RuleOcr(region=(650, 0, 100, 55)).get_raw_result()
             for item in result:
-                if "/30" == item.text[-3:]:
+                if "/30" != item.text[-3:]:
+                    continue
+
+                try:
                     number = int(item.text[:-3])
-                    logger.ui(f"突破券: {number}")
-        except ValueError:
-            number = -1
-            logger.ui_error("突破券识别失败")
+                except ValueError:
+                    logger.ui_error(f"突破券识别失败: {item.text}")
+                    continue
+                logger.ui(f"突破券: {number}")
+                return number
+
+            if attempt < max_attempts - 1:
+                sleep(1, 2)
+
+        logger.ui_error("未识别到突破券数量，请确认画面中显示突破券数量")
         return number
 
     def get_jiejietupo_scene(self) -> Point | None:
@@ -121,6 +142,10 @@ class HuiJuan(BasePackage):
                 return
 
             sleep(4)
+
+            if number < 0:
+                # 探索次数为0时，入场前的画面可能读不到突破券，进入结界突破后再识别一次
+                number = self.get_current_number(max_attempts=1)
 
             # TODO 判断机制
             logger.ui(f"个人突破{number}次")
