@@ -197,13 +197,13 @@ def test_ensure_chapter_28_drags_until_chapter_appears(monkeypatch):
 
 
 def test_ensure_chapter_28_falls_back_to_wheel(monkeypatch):
-    attempts = ProductionTanSuo.chapter_scroll_attempts
+    drags = ProductionTanSuo.chapter_drag_attempts
     # 拖动两个方向都试完后仍然没有28章，改用滚轮
-    runner, _, events = _make_runner(monkeypatch, ready_after=attempts * 2 + 1)
+    runner, _, events = _make_runner(monkeypatch, ready_after=drags * 2 + 1)
 
     assert runner.ensure_chapter_28() is True
     kinds = [event[0] for event in events if event[0] != "move"]
-    assert kinds.count("drag") == attempts * 2
+    assert kinds.count("drag") == drags * 2
     assert kinds.count("scroll") == 1
     assert events[0][0] == "move"
 
@@ -238,7 +238,8 @@ def test_ensure_chapter_28_gives_up_after_bounded_attempts(monkeypatch):
     runner, state, _ = _make_runner(monkeypatch, ready_after=10**6)
 
     assert runner.ensure_chapter_28() is False
-    assert state["scrolled"] == ProductionTanSuo.chapter_scroll_attempts * 4
+    per_pass = ProductionTanSuo.chapter_drag_attempts + ProductionTanSuo.chapter_scroll_attempts
+    assert state["scrolled"] == per_pass * 2
 
 
 def test_ensure_chapter_28_switches_mechanism_when_list_does_not_move(monkeypatch):

@@ -81,11 +81,13 @@ class TanSuo(BasePackage):
     chapter_scroll_point: tuple[int, int] = (1000, 360)
     """章节列表滑动起点（标准化坐标），位于列表中间，上下滑动都不会滑出窗口"""
     chapter_drag_distance: int = 200
-    """章节列表每次拖动的距离"""
+    """章节列表每次拖动的距离（过大时会拖到窗口外触发回弹）"""
     chapter_scroll_distance: int = 240
-    """章节列表每次滚轮的距离（120 的整数倍）"""
-    chapter_scroll_attempts: int = 14
-    """每个方向、每种滑动方式的最大尝试次数"""
+    """章节列表每次滚轮的距离（120 的整数倍，实测约移动 1 章）"""
+    chapter_drag_attempts: int = 12
+    """拖动方式的最大尝试次数（实测一次拖动约移动 3 章）"""
+    chapter_scroll_attempts: int = 30
+    """滚轮方式的最大尝试次数（实测一次滚轮约移动 1 章）"""
     chapter_no_movement_limit: int = 4
     """连续多少次滑动后列表没有变化，就换下一种滑动方式"""
     chapter_switch_attempts: int = 5
@@ -165,10 +167,21 @@ class TanSuo(BasePackage):
         if point is None:
             return False
 
+        return self.click_chapter_entry(point)
+
+    def click_chapter_entry(self, point: Point) -> bool:
+        """点击章节条目并等待切换完成
+
+        Args:
+            point (Point): 章节条目坐标
+
+        Returns:
+            bool: 是否成功切换到28章
+        """
         logger.ui(f"点击章节列表中的{self.target_chapter}章")
         Mouse.click(point)
 
-        # 切换章节有动画，标题不是立刻出现
+        # 切换章节有动画，标题和章节号不是立刻出现
         for _ in range(self.chapter_switch_attempts):
             if bool(event_thread):
                 raise GUIStopException
@@ -212,25 +225,33 @@ class TanSuo(BasePackage):
                 return item.center
         return None
 
+    def chapter_items(self) -> list[tuple[int, Point]]:
+        """识别章节列表，返回可见章节的章节号与坐标
+
+        Returns:
+            list[tuple[int, Point]]: [(章节号, 条目中心坐标)]，识别不到时为空列表
+        """
+        items: list[tuple[int, Point]] = []
+        for item in RuleOcr(region=self.chapter_list_region).get_raw_result():
+            number = parse_chapter_number(item.text)
+            if number is not None:
+                items.append((number, item.center))
+
+        if items:
+            logger.info(f"当前可见章节：{[number for number, _ in items]}")
+        return items
+
     def visible_chapters(self) -> list[int]:
         """识别章节列表当前可见的章节号
 
         Returns:
             list[int]: 可见的章节号列表，识别不到时为空列表
         """
-        chapters: list[int] = []
-        for item in RuleOcr(region=self.chapter_list_region).get_raw_result():
-            number = parse_chapter_number(item.text)
-            if number is not None:
-                chapters.append(number)
-
-        if chapters:
-            logger.info(f"当前可见章节：{chapters}")
-        return chapters
+        return [number for number, _ in self.chapter_items()]
 
     def chapter_list_visible(self) -> bool:
         """章节列表是否可见（识别到至少一个「第X章」）"""
-        return bool(self.visible_chapters())
+        return bool(self.chapter_items())
 
     def scroll_chapter_list(self, direction: int, use_drag: bool = False) -> None:
         """在章节列表上滑动
@@ -299,32 +320,48 @@ class TanSuo(BasePackage):
             if self.chapter_ready():
                 return True
 
-        for use_drag in (True, False):
+        for use_drag, attempts in (
+            (True, self.chapter_drag_attempts),
+            (False, self.chapter_scroll_attempts),
+        ):
             for direction in (-1, 1):
+                previous: list[int] = []
                 no_movement = 0
-                for _ in range(self.chapter_scroll_attempts):
+                for _ in range(attempts):
                     if bool(event_thread):
                         raise GUIStopException
 
-                    if self.chapter_ready():
+                    # 28章标题已出现（模板匹配，开销很小）
+                    if RuleImage(self.IMAGE_TITLE_28).match():
                         return True
 
                     # 看不到章节列表说明不在探索界面，不要乱滑，避免影响其它界面
-                    before = self.visible_chapters()
-                    if not before:
+                    items = self.chapter_items()
+                    if not items:
                         logger.ui_warn("当前看不到章节列表，停止滑动")
                         return None
 
-                    self.scroll_chapter_list(direction, use_drag=use_drag)
-                    sleep(0.6, 1.0)
-
-                    if self.visible_chapters() == before:
+                    numbers = [number for number, _ in items]
+                    if numbers == previous:
                         no_movement += 1
                         if no_movement >= self.chapter_no_movement_limit:
                             logger.ui_warn("章节列表没有变化，换一种滑动方式")
                             break
                     else:
                         no_movement = 0
+                    previous = numbers
+
+                    # 已经能看到28章就直接点击（文字识别定位，避免图像误匹配）
+                    target = next(
+                        (point for number, point in items if number == self.target_chapter), None
+                    )
+                    if target is not None:
+                        if self.click_chapter_entry(target):
+                            return True
+                        continue
+
+                    self.scroll_chapter_list(direction, use_drag=use_drag)
+                    sleep(1.0, 1.3)  # 等待滚动动画结束再识别
 
         logger.ui_error("未识别到28章，请手动切换章节")
         return False
