@@ -31,6 +31,7 @@ def _make_runner(
     click_polls: int = 0,
     back_visible: bool = False,
     list_tail: int | None = None,
+    list_base_y: int = 200,
 ):
     """按章节列表滑动次数模拟28章何时出现。
 
@@ -108,7 +109,7 @@ def _make_runner(
         return [
             SimpleNamespace(
                 text=f"第{number}章",
-                center=SimpleNamespace(client_x=976, client_y=200 + index * 94),
+                center=SimpleNamespace(client_x=976, client_y=list_base_y + index * 94),
             )
             for index, number in enumerate(numbers)
         ]
@@ -284,6 +285,38 @@ def test_ensure_chapter_28_stops_after_repeated_click_failures(monkeypatch):
 
     clicks = [event for event in events if event[0] == "click"]
     assert len(clicks) == limit
+
+
+def _base_y_below_visible_area() -> int:
+    """放在列表可视区底部的一行：再往下推断一行就会超出可视区。"""
+    _, top, _, height = ProductionTanSuo.chapter_list_region
+    bottom = top + height - ProductionTanSuo.chapter_row_spacing // 2
+    return bottom - ProductionTanSuo.chapter_row_spacing + 10
+
+
+def test_target_entry_point_does_not_infer_row_outside_visible_area(monkeypatch):
+    """27章已经在列表最底部时，推断出的28章在可视区外，不能按坐标点击。"""
+    runner, _, _ = _make_runner(
+        monkeypatch, ready_after=10**6, list_tail=27, list_base_y=_base_y_below_visible_area()
+    )
+
+    assert runner.target_entry_point(runner.chapter_items()) is None
+
+
+def test_ensure_chapter_28_scrolls_when_target_row_is_below_visible_area(monkeypatch):
+    runner, _, events = _make_runner(
+        monkeypatch,
+        ready_after=10**6,
+        list_tail=27,
+        list_base_y=_base_y_below_visible_area(),
+        list_moves=False,
+    )
+
+    assert runner.ensure_chapter_28() is False
+
+    # 不能对着看不见的位置点击，只能滑动
+    assert all(event[0] != "click" for event in events)
+    assert any(event[0] in ("drag", "scroll") for event in events)
 
 
 def test_ensure_chapter_28_gives_up_after_bounded_attempts(monkeypatch):

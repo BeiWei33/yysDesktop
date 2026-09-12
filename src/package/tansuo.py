@@ -302,12 +302,21 @@ class TanSuo(BasePackage):
 
         return self.chapter_list_visible()
 
+    def chapter_list_bottom(self) -> int:
+        """章节列表可视区域的底边（留半行余量）"""
+        _, top, _, height = self.chapter_list_region
+        return top + height - self.chapter_row_spacing // 2
+
     def target_entry_point(self, items: list[tuple[int, Point]]) -> Point | None:
         """在识别结果里定位目标章节的坐标
 
-        优先使用直接识别到的目标章节；如果最后一行是目标章节的上一章，
-        说明目标章节就在它下面一行（最后一行常被截断识别，例如「第二十八章」只识别出「十八」），
-        按实测行间距推断坐标。点击后仍会用章节号校验，推断错误不会误切章节。
+        优先使用直接识别到的目标章节；如果最后一行是目标章节的上一章，且目标行仍落在
+        列表可视区域内，说明目标章节就在它下面一行（最后一行常被截断识别，例如
+        「第二十八章」只识别出「十八」），按实测行间距推断坐标。
+
+        如果推断出的位置已经超出列表可视区域，说明目标章节还在下面看不见，
+        此时返回 None 让调用方继续滑动，等它露出来后再直接按文字识别点击。
+        点击后仍会用章节号校验，推断错误不会误切章节。
 
         Args:
             items (list[tuple[int, Point]]): chapter_items() 的结果
@@ -323,10 +332,16 @@ class TanSuo(BasePackage):
             return None
 
         last_number, last_point = max(items, key=lambda item: item[1].client_y)
-        if last_number == self.target_chapter - 1:
-            logger.info(f"识别到第{last_number}章，按行间距推断第{self.target_chapter}章位置")
-            return Point(last_point.client_x, last_point.client_y + self.chapter_row_spacing)
-        return None
+        if last_number != self.target_chapter - 1:
+            return None
+
+        inferred_y = last_point.client_y + self.chapter_row_spacing
+        if inferred_y > self.chapter_list_bottom():
+            logger.info(f"第{self.target_chapter}章还在列表下方看不见，继续滑动")
+            return None
+
+        logger.info(f"识别到第{last_number}章，按行间距推断第{self.target_chapter}章位置")
+        return Point(last_point.client_x, inferred_y)
 
     def ensure_chapter_28(self) -> bool | None:
         """确保当前选择的是28章
