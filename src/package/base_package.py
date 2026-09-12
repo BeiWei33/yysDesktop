@@ -339,6 +339,23 @@ class BasePackage:
                     logger.ui_warn(f"战斗失败（{rule.description}）")
                     return False
 
+    def click_ready_once(self) -> bool:
+        """识别到准备按钮则点击一次
+
+        上阵阶段结束后需要点击准备才会开始战斗，部分玩法不会自动准备。
+
+        Returns:
+            bool: 是否识别到并点击了准备按钮
+        """
+        for image in (self.global_assets.IMAGE_READY_NEW, self.global_assets.IMAGE_READY_OLD):
+            rule = RuleImage(image)
+            if rule.match():
+                logger.ui("点击准备")
+                Mouse.click(rule.center_point())
+                sleep(1.0, 1.5)
+                return True
+        return False
+
     @log_function_call
     def ensure_finish(self):
         """确保结束"""

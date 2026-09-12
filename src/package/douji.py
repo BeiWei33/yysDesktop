@@ -77,6 +77,11 @@ class DouJi(BasePackage):
                 raise GUIStopException
 
             sleep()
+
+            # 上阵结束后需要点击准备才会开始战斗
+            if self.click_ready_once():
+                continue
+
             result = ocr_match_once(self.current_asset_list)
             if result is None:
                 for fail_img in self.global_assets.ALL_FAIL_IMAGES:
