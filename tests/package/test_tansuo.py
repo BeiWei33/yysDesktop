@@ -74,6 +74,36 @@ def test_chapter_ready_returns_true_when_title_visible(monkeypatch):
     assert events == []
 
 
+def test_chapter_ready_clicks_visible_entry_and_waits_for_title(monkeypatch):
+    runner = object.__new__(ProductionTanSuo)
+    runner.IMAGE_TITLE_28 = object()
+    runner.IMAGE_TANSUO_28 = object()
+    checks = {"title": 0}
+    clicks = []
+
+    class FakeRuleImage:
+        def __init__(self, asset):
+            self.asset = asset
+
+        def match(self, *args, **kwargs):
+            if self.asset is runner.IMAGE_TITLE_28:
+                checks["title"] += 1
+                # 点击后需要等几帧标题才出现
+                return checks["title"] >= 3
+            return True
+
+        def center_point(self):
+            return "entry"
+
+    monkeypatch.setattr(tansuo_module, "RuleImage", FakeRuleImage)
+    monkeypatch.setattr(tansuo_module, "Mouse", SimpleNamespace(click=clicks.append))
+    monkeypatch.setattr(tansuo_module, "sleep", lambda *args, **kwargs: None)
+
+    assert runner.chapter_ready() is True
+    assert clicks == ["entry"]
+    assert checks["title"] >= 3
+
+
 def test_ensure_chapter_28_drags_until_chapter_appears(monkeypatch):
     runner, state, events = _make_runner(monkeypatch, ready_after=3)
 

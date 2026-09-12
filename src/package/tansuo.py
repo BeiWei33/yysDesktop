@@ -40,6 +40,8 @@ class TanSuo(BasePackage):
     """章节列表每次滚轮/拖动的距离"""
     chapter_scroll_attempts: int = 6
     """每个方向、每种滑动方式的最大尝试次数"""
+    chapter_switch_attempts: int = 5
+    """点击28章后等待标题出现的检查次数"""
     chapter_fix_interval: int = 12
     """连续多少次未识别到探索界面后尝试切换28章"""
     chapter_fix_max_failures: int = 2
@@ -116,8 +118,15 @@ class TanSuo(BasePackage):
 
         logger.ui("点击章节列表中的28章")
         Mouse.click(entry.center_point())
-        sleep(2, 3)  # 等待切换章节的动画
-        return RuleImage(self.IMAGE_TITLE_28).match()
+        # 切换章节有动画，标题不是立刻出现
+        for _ in range(self.chapter_switch_attempts):
+            if bool(event_thread):
+                raise GUIStopException
+
+            sleep(1)
+            if RuleImage(self.IMAGE_TITLE_28).match():
+                return True
+        return False
 
     def scroll_chapter_list(self, direction: int, use_drag: bool = False) -> None:
         """在章节列表上滑动
