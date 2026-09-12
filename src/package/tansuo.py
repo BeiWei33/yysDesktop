@@ -5,9 +5,47 @@ from ..utils.exception import CustomException, DailyLimitException, GUIStopExcep
 from ..utils.function import finish_random_left_right, random_normal, random_num, sleep
 from ..utils.image import RuleImage, check_image_once
 from ..utils.log import logger
+from ..utils.paddleocr import RuleOcr
 from ..utils.point import Point
 from ..utils.viewport import CANONICAL_SIZE
 from .base_package import BasePackage
+
+CHINESE_DIGITS = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def parse_chapter_number(text: str) -> int | None:
+    """从「第X章」文本解析章节号
+
+    Args:
+        text (str): OCR 文本，例如「第二十八章」
+
+    Returns:
+        int | None: 章节号，无法解析时返回 None
+    """
+    if "章" not in text or "第" not in text:
+        return None
+
+    body = text.split("第", 1)[1].split("章", 1)[0].strip()
+    if not body:
+        return None
+    if body.isdigit():
+        return int(body)
+
+    total = 0
+    unit = 1
+    for char in reversed(body):
+        if char == "十":
+            unit = 10
+            continue
+        digit = CHINESE_DIGITS.get(char)
+        if digit is None:
+            return None
+        total += digit * unit
+        unit *= 10
+
+    if total == 0 and "十" in body:
+        total = 10
+    return total or None
 
 
 class TanSuoChapterUnavailable(CustomException):
@@ -34,12 +72,18 @@ class TanSuo(BasePackage):
         "tansuo_28_title",
         "treasure_box",
     ]
-    chapter_scroll_point: tuple[int, int] = (1000, 460)
-    """章节列表滑动起点（标准化坐标），取自28章列表项的历史点击位置"""
+    chapter_list_region: tuple[int, int, int, int] = (930, 150, 206, 420)
+    """章节列表区域（左, 上, 宽, 高），用于识别「第X章」文字"""
+    chapter_scroll_point: tuple[int, int] = (1000, 360)
+    """章节列表滑动起点（标准化坐标），位于列表中间，上下滑动都不会滑出窗口"""
+    chapter_drag_distance: int = 200
+    """章节列表每次拖动的距离"""
     chapter_scroll_distance: int = 240
-    """章节列表每次滚轮/拖动的距离"""
-    chapter_scroll_attempts: int = 6
+    """章节列表每次滚轮的距离（120 的整数倍）"""
+    chapter_scroll_attempts: int = 14
     """每个方向、每种滑动方式的最大尝试次数"""
+    chapter_no_movement_limit: int = 4
+    """连续多少次滑动后列表没有变化，就换下一种滑动方式"""
     chapter_switch_attempts: int = 5
     """点击28章后等待标题出现的检查次数"""
     chapter_fix_interval: int = 12
@@ -128,6 +172,26 @@ class TanSuo(BasePackage):
                 return True
         return False
 
+    def visible_chapters(self) -> list[int]:
+        """识别章节列表当前可见的章节号
+
+        Returns:
+            list[int]: 可见的章节号列表，识别不到时为空列表
+        """
+        chapters: list[int] = []
+        for item in RuleOcr(region=self.chapter_list_region).get_raw_result():
+            number = parse_chapter_number(item.text)
+            if number is not None:
+                chapters.append(number)
+
+        if chapters:
+            logger.info(f"当前可见章节：{chapters}")
+        return chapters
+
+    def chapter_list_visible(self) -> bool:
+        """章节列表是否可见（识别到至少一个「第X章」）"""
+        return bool(self.visible_chapters())
+
     def scroll_chapter_list(self, direction: int, use_drag: bool = False) -> None:
         """在章节列表上滑动
 
@@ -139,7 +203,7 @@ class TanSuo(BasePackage):
         sleep(0.2, 0.4)
         if use_drag:
             logger.info(f"拖动章节列表 direction={direction}")
-            Mouse.drag(0, direction * self.chapter_scroll_distance, random_num(0.4, 0.6))
+            Mouse.drag(0, direction * self.chapter_drag_distance, random_num(0.4, 0.6))
         else:
             logger.info(f"滚动章节列表 direction={direction}")
             Mouse.scroll(direction * self.chapter_scroll_distance)
@@ -147,18 +211,20 @@ class TanSuo(BasePackage):
     def ensure_chapter_28(self) -> bool | None:
         """确保当前选择的是28章
 
-        游戏有时会停留在其它章节，此时识别不到28章，需要滑动右侧章节列表
-        找到并点击28章。拖动和滚轮都会尝试，且两个方向都会尝试，避免方向判断错误。
+        游戏有时会停留在其它章节，此时识别不到28章，需要滑动章节列表找到并点击28章。
+        拖动和滚轮都会尝试，且两个方向都会尝试，避免方向判断错误；
+        某种方式滑不动（列表内容不变）时会尽快换下一种方式。
 
         Returns:
-            bool | None: True 已切换到28章，False 在探索界面但切换失败，
-                None 当前不在探索界面（不做处理，继续等待）
+            bool | None: True 已切换到28章，False 在章节列表界面但切换失败，
+                None 当前看不到章节列表（不做处理，继续等待）
         """
         if self.chapter_ready():
             return True
 
         for use_drag in (True, False):
             for direction in (-1, 1):
+                no_movement = 0
                 for _ in range(self.chapter_scroll_attempts):
                     if bool(event_thread):
                         raise GUIStopException
@@ -166,13 +232,22 @@ class TanSuo(BasePackage):
                     if self.chapter_ready():
                         return True
 
-                    # 不在探索界面时不要乱滑，避免影响其它界面的列表
-                    if not RuleImage(self.IMAGE_START).match():
-                        logger.ui_warn("当前不在探索界面，停止滑动章节列表")
+                    # 看不到章节列表说明不在探索界面，不要乱滑，避免影响其它界面
+                    before = self.visible_chapters()
+                    if not before:
+                        logger.ui_warn("当前看不到章节列表，停止滑动")
                         return None
 
                     self.scroll_chapter_list(direction, use_drag=use_drag)
                     sleep(0.6, 1.0)
+
+                    if self.visible_chapters() == before:
+                        no_movement += 1
+                        if no_movement >= self.chapter_no_movement_limit:
+                            logger.ui_warn("章节列表没有变化，换一种滑动方式")
+                            break
+                    else:
+                        no_movement = 0
 
         logger.ui_error("未识别到28章，请手动切换章节")
         return False
