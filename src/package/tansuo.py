@@ -76,6 +76,8 @@ class TanSuo(BasePackage):
     """章节列表区域（左, 上, 宽, 高），用于识别「第X章」文字"""
     chapter_number_region: tuple[int, int, int, int] = (140, 0, 280, 55)
     """章节详情页左上角的章节号区域（左, 上, 宽, 高）"""
+    chapter_row_spacing: int = 94
+    """章节列表行间距（实测），用于推断被截断识别不到的下一行"""
     target_chapter: int = 28
     """目标章节号"""
     chapter_scroll_point: tuple[int, int] = (1000, 360)
@@ -86,8 +88,8 @@ class TanSuo(BasePackage):
     """章节列表每次滚轮的距离（120 的整数倍，实测约移动 1 章）"""
     chapter_drag_attempts: int = 12
     """拖动方式的最大尝试次数（实测一次拖动约移动 3 章）"""
-    chapter_scroll_attempts: int = 30
-    """滚轮方式的最大尝试次数（实测一次滚轮约移动 1 章）"""
+    chapter_scroll_attempts: int = 12
+    """滚轮方式的最大尝试次数（实测一次滚轮约移动 1 章，作为兜底手段）"""
     chapter_no_movement_limit: int = 4
     """连续多少次滑动后列表没有变化，就换下一种滑动方式"""
     chapter_switch_attempts: int = 5
@@ -298,6 +300,32 @@ class TanSuo(BasePackage):
 
         return self.chapter_list_visible()
 
+    def target_entry_point(self, items: list[tuple[int, Point]]) -> Point | None:
+        """在识别结果里定位目标章节的坐标
+
+        优先使用直接识别到的目标章节；如果最后一行是目标章节的上一章，
+        说明目标章节就在它下面一行（最后一行常被截断识别，例如「第二十八章」只识别出「十八」），
+        按实测行间距推断坐标。点击后仍会用章节号校验，推断错误不会误切章节。
+
+        Args:
+            items (list[tuple[int, Point]]): chapter_items() 的结果
+
+        Returns:
+            Point | None: 目标章节坐标，无法定位时返回 None
+        """
+        for number, point in items:
+            if number == self.target_chapter:
+                return point
+
+        if not items:
+            return None
+
+        last_number, last_point = max(items, key=lambda item: item[1].client_y)
+        if last_number == self.target_chapter - 1:
+            logger.info(f"识别到第{last_number}章，按行间距推断第{self.target_chapter}章位置")
+            return Point(last_point.client_x, last_point.client_y + self.chapter_row_spacing)
+        return None
+
     def ensure_chapter_28(self) -> bool | None:
         """确保当前选择的是28章
 
@@ -352,9 +380,7 @@ class TanSuo(BasePackage):
                     previous = numbers
 
                     # 已经能看到28章就直接点击（文字识别定位，避免图像误匹配）
-                    target = next(
-                        (point for number, point in items if number == self.target_chapter), None
-                    )
+                    target = self.target_entry_point(items)
                     if target is not None:
                         if self.click_chapter_entry(target):
                             return True

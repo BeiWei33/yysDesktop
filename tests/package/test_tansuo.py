@@ -30,6 +30,7 @@ def _make_runner(
     entry_visible: bool = False,
     click_polls: int = 0,
     back_visible: bool = False,
+    list_tail: int | None = None,
 ):
     """按章节列表滑动次数模拟28章何时出现。
 
@@ -41,6 +42,7 @@ def _make_runner(
         entry_visible: 章节列表里是否能看到「第二十八章」
         click_polls: 点击28章后还要等几次检查才出现标题
         back_visible: 详情页左上角是否能识别到返回按钮
+        list_tail: 列表只显示这一章（用于模拟最后一行被截断识别）
     """
     runner = object.__new__(ProductionTanSuo)
     runner.IMAGE_TITLE_28 = object()
@@ -95,12 +97,21 @@ def _make_runner(
     def list_result():
         if state["in_detail"] or not (list_visible or entry_visible):
             return []
-        # 列表可见时至少识别到两个章节；滑动有效时内容会变化，但不会滑动到28章
-        first = 1 + (state["scrolled"] % 26 if list_moves else 0)
-        texts = [f"第{first}章", f"第{first + 1}章"]
-        if entry_visible:
-            texts.append(f"第{runner.target_chapter}章")
-        return [SimpleNamespace(text=text, center=f"point-{text}") for text in texts]
+        if list_tail is not None:
+            numbers = [list_tail]
+        else:
+            # 列表可见时至少识别到两个章节；滑动有效时内容会变化，但不会滑动到28章
+            first = 1 + (state["scrolled"] % 25 if list_moves else 0)
+            numbers = [first, first + 1]
+            if entry_visible:
+                numbers.append(runner.target_chapter)
+        return [
+            SimpleNamespace(
+                text=f"第{number}章",
+                center=SimpleNamespace(client_x=976, client_y=200 + index * 94),
+            )
+            for index, number in enumerate(numbers)
+        ]
 
     def detail_result():
         if not state["in_detail"] or detail_chapter is None:
@@ -168,8 +179,28 @@ def test_chapter_ready_clicks_entry_found_by_ocr(monkeypatch):
     runner, _, events = _make_runner(monkeypatch, ready_after=10**6, entry_visible=True, click_polls=2)
 
     assert runner.chapter_ready() is True
-    assert [event[0] for event in events][0] == "click"
-    assert events[0][1] == f"point-第{runner.target_chapter}章"
+    clicks = [event for event in events if event[0] == "click"]
+    assert clicks[0][1].client_x == 976
+    assert clicks[0][1].client_y == 200 + 2 * 94  # 第三个条目＝28章
+
+
+def test_target_entry_point_infers_row_below_previous_chapter(monkeypatch):
+    runner, _, _ = _make_runner(monkeypatch, ready_after=10**6, list_tail=27)
+    items = runner.chapter_items()
+
+    point = runner.target_entry_point(items)
+
+    assert point is not None
+    assert point.client_y == 200 + runner.chapter_row_spacing
+
+
+def test_ensure_chapter_28_clicks_inferred_row_for_misread_last_row(monkeypatch):
+    # 27章下面那一行就是28章（最后一行常被截断识别成「十八」）
+    runner, _, events = _make_runner(monkeypatch, ready_after=10**6, list_tail=27)
+
+    assert runner.ensure_chapter_28() is True
+    clicks = [event for event in events if event[0] == "click"]
+    assert clicks[0][1].client_y == 200 + runner.chapter_row_spacing
 
 
 def test_chapter_ready_returns_false_when_entry_missing(monkeypatch):
