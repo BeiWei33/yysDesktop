@@ -265,6 +265,27 @@ def test_ensure_chapter_28_goes_back_to_list_from_other_chapter_detail_page(monk
     assert state["in_detail"] is False
 
 
+def test_ensure_chapter_28_scrolls_after_failed_target_click(monkeypatch):
+    """28章就在眼前但点击无效时，必须滑动改变状态，不能原地重复点击。"""
+    runner, _, events = _make_runner(monkeypatch, ready_after=10**6, list_tail=27, click_polls=10**6)
+
+    assert runner.ensure_chapter_28() is False
+
+    kinds = [event[0] for event in events]
+    first_click = kinds.index("click")
+    assert "drag" in kinds[first_click:] or "scroll" in kinds[first_click:]
+
+
+def test_ensure_chapter_28_stops_after_repeated_click_failures(monkeypatch):
+    runner, _, events = _make_runner(monkeypatch, ready_after=10**6, list_tail=27, click_polls=10**6)
+    limit = ProductionTanSuo.chapter_click_failure_limit
+
+    assert runner.ensure_chapter_28() is False
+
+    clicks = [event for event in events if event[0] == "click"]
+    assert len(clicks) == limit
+
+
 def test_ensure_chapter_28_gives_up_after_bounded_attempts(monkeypatch):
     runner, state, _ = _make_runner(monkeypatch, ready_after=10**6)
 

@@ -92,6 +92,8 @@ class TanSuo(BasePackage):
     """滚轮方式的最大尝试次数（实测一次滚轮约移动 1 章，作为兜底手段）"""
     chapter_no_movement_limit: int = 4
     """连续多少次滑动后列表没有变化，就换下一种滑动方式"""
+    chapter_click_failure_limit: int = 4
+    """识别到28章但点击无效多少次后停止尝试（避免一直点同一个位置）"""
     chapter_switch_attempts: int = 5
     """点击28章后等待标题出现的检查次数"""
     chapter_fix_interval: int = 12
@@ -348,6 +350,7 @@ class TanSuo(BasePackage):
             if self.chapter_ready():
                 return True
 
+        click_failures = 0
         for use_drag, attempts in (
             (True, self.chapter_drag_attempts),
             (False, self.chapter_scroll_attempts),
@@ -376,6 +379,8 @@ class TanSuo(BasePackage):
                             logger.ui_warn("章节列表没有变化，换一种滑动方式")
                             break
                     else:
+                        # 界面日志也记录可见章节，便于只看界面日志时定位问题
+                        logger.ui(f"当前可见章节：{numbers}")
                         no_movement = 0
                     previous = numbers
 
@@ -384,7 +389,13 @@ class TanSuo(BasePackage):
                     if target is not None:
                         if self.click_chapter_entry(target):
                             return True
-                        continue
+
+                        # 点击无效时不能原地重复点击，否则会一直卡在同一个位置
+                        click_failures += 1
+                        if click_failures >= self.chapter_click_failure_limit:
+                            logger.ui_error(f"识别到{self.target_chapter}章但点击无效，请手动切换章节")
+                            return False
+                        logger.ui_warn(f"点击{self.target_chapter}章后未切换成功，滑动后重试")
 
                     self.scroll_chapter_list(direction, use_drag=use_drag)
                     sleep(1.0, 1.3)  # 等待滚动动画结束再识别
