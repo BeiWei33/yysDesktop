@@ -21,15 +21,40 @@ def test_tansuo():
     check_package(TanSuo)
 
 
-def _make_runner(monkeypatch, ready_after: int, list_visible: bool = True, list_moves: bool = True):
-    """按章节列表滑动次数模拟28章何时出现。"""
+def _make_runner(
+    monkeypatch,
+    ready_after: int,
+    list_visible: bool = True,
+    list_moves: bool = True,
+    detail_chapter: int | None = None,
+    entry_visible: bool = False,
+    click_polls: int = 0,
+    back_visible: bool = False,
+):
+    """按章节列表滑动次数模拟28章何时出现。
+
+    Args:
+        ready_after: 滑动多少次后28章出现（标题识别成功）
+        list_visible: 章节列表是否能识别到「第X章」
+        list_moves: 滑动后列表内容是否变化
+        detail_chapter: 章节详情页左上角识别到的章节号
+        entry_visible: 章节列表里是否能看到「第二十八章」
+        click_polls: 点击28章后还要等几次检查才出现标题
+        back_visible: 详情页左上角是否能识别到返回按钮
+    """
     runner = object.__new__(ProductionTanSuo)
     runner.IMAGE_TITLE_28 = object()
     runner.IMAGE_TANSUO_28 = object()
+    runner.IMAGE_QUIT = object()
     runner.chapter_miss_count = 0
     runner.chapter_fix_failures = 0
 
-    state = {"scrolled": 0}
+    state = {
+        "scrolled": 0,
+        "entry_clicks": 0,
+        "polls": 0,
+        "in_detail": detail_chapter is not None,
+    }
     events = []
 
     class FakeRuleImage:
@@ -38,8 +63,16 @@ def _make_runner(monkeypatch, ready_after: int, list_visible: bool = True, list_
 
         def match(self, *args, **kwargs):
             if self.asset is runner.IMAGE_TITLE_28:
+                if state["entry_clicks"]:
+                    state["polls"] += 1
+                    return state["polls"] > click_polls
                 return state["scrolled"] >= ready_after
+            if self.asset is runner.IMAGE_QUIT:
+                return back_visible and state["in_detail"]
             return False
+
+        def center_point(self):
+            return "back"
 
     def move(point=None, **kwargs):
         events.append(("move", point))
@@ -52,23 +85,40 @@ def _make_runner(monkeypatch, ready_after: int, list_visible: bool = True, list_
         state["scrolled"] += 1
         events.append(("drag", x_offset, y_offset))
 
-    def get_raw_result():
-        if not list_visible:
+    def click(point=None, **kwargs):
+        events.append(("click", point))
+        if point == "back":
+            state["in_detail"] = False
+        else:
+            state["entry_clicks"] += 1
+
+    def list_result():
+        if state["in_detail"] or not (list_visible or entry_visible):
             return []
-        # 列表可见时至少识别到两个章节，滑动有效时内容会变化
-        first = 1 + (state["scrolled"] if list_moves else 0)
-        return [SimpleNamespace(text=f"第{first}章"), SimpleNamespace(text=f"第{first + 1}章")]
+        # 列表可见时至少识别到两个章节；滑动有效时内容会变化，但不会滑动到28章
+        first = 1 + (state["scrolled"] % 26 if list_moves else 0)
+        texts = [f"第{first}章", f"第{first + 1}章"]
+        if entry_visible:
+            texts.append(f"第{runner.target_chapter}章")
+        return [SimpleNamespace(text=text, center=f"point-{text}") for text in texts]
+
+    def detail_result():
+        if not state["in_detail"] or detail_chapter is None:
+            return []
+        return [SimpleNamespace(text=f"第{detail_chapter}章", center="detail")]
+
+    def fake_ocr(*args, **kwargs):
+        region = kwargs.get("region")
+        if region == ProductionTanSuo.chapter_number_region:
+            return SimpleNamespace(get_raw_result=detail_result)
+        return SimpleNamespace(get_raw_result=list_result)
 
     monkeypatch.setattr(tansuo_module, "RuleImage", FakeRuleImage)
-    monkeypatch.setattr(
-        tansuo_module,
-        "RuleOcr",
-        lambda *args, **kwargs: SimpleNamespace(get_raw_result=get_raw_result),
-    )
+    monkeypatch.setattr(tansuo_module, "RuleOcr", fake_ocr)
     monkeypatch.setattr(
         tansuo_module,
         "Mouse",
-        SimpleNamespace(move=move, scroll=scroll, drag=drag, click=lambda *a, **k: None),
+        SimpleNamespace(move=move, scroll=scroll, drag=drag, click=click),
     )
     monkeypatch.setattr(tansuo_module, "sleep", lambda *args, **kwargs: None)
     monkeypatch.setattr(tansuo_module, "random_num", lambda a, b: a)
@@ -114,34 +164,26 @@ def test_chapter_ready_returns_true_when_title_visible(monkeypatch):
     assert events == []
 
 
-def test_chapter_ready_clicks_visible_entry_and_waits_for_title(monkeypatch):
-    runner = object.__new__(ProductionTanSuo)
-    runner.IMAGE_TITLE_28 = object()
-    runner.IMAGE_TANSUO_28 = object()
-    checks = {"title": 0}
-    clicks = []
-
-    class FakeRuleImage:
-        def __init__(self, asset):
-            self.asset = asset
-
-        def match(self, *args, **kwargs):
-            if self.asset is runner.IMAGE_TITLE_28:
-                checks["title"] += 1
-                # 点击后需要等几帧标题才出现
-                return checks["title"] >= 3
-            return True
-
-        def center_point(self):
-            return "entry"
-
-    monkeypatch.setattr(tansuo_module, "RuleImage", FakeRuleImage)
-    monkeypatch.setattr(tansuo_module, "Mouse", SimpleNamespace(click=clicks.append))
-    monkeypatch.setattr(tansuo_module, "sleep", lambda *args, **kwargs: None)
+def test_chapter_ready_clicks_entry_found_by_ocr(monkeypatch):
+    runner, _, events = _make_runner(monkeypatch, ready_after=10**6, entry_visible=True, click_polls=2)
 
     assert runner.chapter_ready() is True
-    assert clicks == ["entry"]
-    assert checks["title"] >= 3
+    assert [event[0] for event in events][0] == "click"
+    assert events[0][1] == f"point-第{runner.target_chapter}章"
+
+
+def test_chapter_ready_returns_false_when_entry_missing(monkeypatch):
+    runner, _, events = _make_runner(monkeypatch, ready_after=10**6, entry_visible=False)
+
+    assert runner.chapter_ready() is False
+    assert events == []
+
+
+def test_chapter_ready_accepts_detail_page_of_chapter_28(monkeypatch):
+    runner, _, events = _make_runner(monkeypatch, ready_after=10**6, detail_chapter=28)
+
+    assert runner.chapter_ready() is True
+    assert events == []
 
 
 def test_ensure_chapter_28_drags_until_chapter_appears(monkeypatch):
@@ -171,6 +213,25 @@ def test_ensure_chapter_28_returns_none_outside_chapter_list(monkeypatch):
 
     assert runner.ensure_chapter_28() is None
     assert state["scrolled"] == 0
+
+
+def test_ensure_chapter_28_returns_none_on_other_chapter_detail_page(monkeypatch):
+    runner, state, _ = _make_runner(monkeypatch, ready_after=1, list_visible=False, detail_chapter=21)
+
+    assert runner.ensure_chapter_28() is None
+    assert state["scrolled"] == 0
+
+
+def test_ensure_chapter_28_goes_back_to_list_from_other_chapter_detail_page(monkeypatch):
+    runner, state, events = _make_runner(
+        monkeypatch, ready_after=1, detail_chapter=21, back_visible=True
+    )
+
+    assert runner.ensure_chapter_28() is True
+    # 先点左上角返回，回到列表后再滑动找到28章
+    assert events[0] == ("click", "back")
+    assert any(event[0] == "drag" for event in events)
+    assert state["in_detail"] is False
 
 
 def test_ensure_chapter_28_gives_up_after_bounded_attempts(monkeypatch):
