@@ -71,6 +71,13 @@
             "region": [0, 0, 0, 0],
             "score": "0.7",
             "method": "PERFACT"
+        },
+        {
+            "name": "guanzhu",
+            "keyword": "馆主",
+            "region": [0, 0, 0, 0],
+            "score": "0.7",
+            "method": "PERFACT"
         }
     ]
 }

@@ -511,7 +511,12 @@ class MainWindow(FluentWindow):
 
             case GameFunction.DAOGUANTUPO:
                 flag_guanzhan = advanced_stack.daoguantupo_card.checkbox.isChecked()
-                DaoGuanTuPo(n=selected_number, flag_guanzhan=flag_guanzhan).task_start()
+                flag_guanzhu = advanced_stack.daoguantupo_card.guanzhu_checkbox.isChecked()
+                DaoGuanTuPo(
+                    n=selected_number,
+                    flag_guanzhan=flag_guanzhan,
+                    flag_guanzhu=flag_guanzhu,
+                ).task_start()
 
             case GameFunction.ZHAOHUAN:
                 ZhaoHuan(n=selected_number).task_start()

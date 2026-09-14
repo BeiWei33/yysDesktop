@@ -320,10 +320,13 @@ class HomeWidget(QWidget):
                 self.headerView.setFixedHeight(GroupHeaderCardWidgetHeaderViewHeight)
 
                 self.checkbox = CheckBox("观战")
+                self.guanzhu_checkbox = CheckBox("打馆主")
+                self.guanzhu_checkbox.setChecked(True)
 
                 self.vBoxLayout = QVBoxLayout()
                 self.vBoxLayout.setSpacing(10)
                 self.vBoxLayout.addWidget(self.checkbox)
+                self.vBoxLayout.addWidget(self.guanzhu_checkbox)
                 self.vBoxLayout.addStretch()
 
                 self.viewLayout.addLayout(self.vBoxLayout)

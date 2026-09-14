@@ -33,11 +33,13 @@ class DaoGuanTuPo(BasePackage):
     STATE_WAIT_AUTO_ENTER = 2  # 等待主动进入
     STATE_WAIT_START = 3  # 手动开始
     STATE_FIGHTING = 4  # 进行中
+    STATE_GUANZHU = 5  # 馆主战
 
     @log_function_call
-    def __init__(self, n: int = 0, flag_guanzhan: bool = False) -> None:
+    def __init__(self, n: int = 0, flag_guanzhan: bool = False, flag_guanzhu: bool = True) -> None:
         super().__init__(n)
         self.flag_guanzhan = flag_guanzhan  # 是否观战
+        self.flag_guanzhu = flag_guanzhu  # 是否打馆主
         self.flag_fighting = False  # 是否进行中
         self.state = self.STATE_IDLE
 
@@ -59,6 +61,7 @@ class DaoGuanTuPo(BasePackage):
         self.OCR_TITLE = self.get_ocr_asset("title")
         self.OCR_DAOJISHI = self.get_ocr_asset("daojishi")
         self.OCR_REMAINTIME = self.get_ocr_asset("shengyutuposhijian")
+        self.OCR_GUANZHU = self.get_ocr_asset("guanzhu")
 
     @log_function_call
     def check_title(self) -> None:
@@ -69,6 +72,13 @@ class DaoGuanTuPo(BasePackage):
 
             sleep()
             result = RuleOcr().get_raw_result()
+
+            # 馆主战优先判断：同一屏可能同时出现「剩余突破时间」等其它文字
+            if any(self.OCR_GUANZHU.keyword in item.text for item in result):
+                self.state = self.STATE_GUANZHU
+                logger.ui("当前是馆主战")
+                return
+
             for item in result:
                 if self.OCR_TITLE.keyword == item.text:
                     logger.ui_hint(self.scene_name)
@@ -149,13 +159,23 @@ class DaoGuanTuPo(BasePackage):
         self.n += 1
         logger.progress(self.n)
 
-    def check_and_enter_battle(self):
-        """检查标题并进入战斗场景"""
+    def check_and_enter_battle(self) -> bool:
+        """检查标题并进入战斗场景
+
+        Returns:
+            bool: 是否继续本次战斗（按设置跳过馆主战时不继续）
+        """
         self.check_title()
         sleep(2)
-        if self.state == self.STATE_WAIT_START:
+
+        if self.state == self.STATE_GUANZHU and not self.flag_guanzhu:
+            logger.ui_warn("当前是馆主战，已按设置跳过")
+            return False
+
+        if self.state in (self.STATE_WAIT_START, self.STATE_GUANZHU):
             self.check_click(self.IMAGE_TIAOZHAN, timeout=3)
         sleep(4)  # 等待过场动画
+        return True
 
     def click_ready(self, timeout: float = 5) -> bool:
         """点击准备按钮直到消失
@@ -241,7 +261,10 @@ class DaoGuanTuPo(BasePackage):
 
             logger.ui(f"第{i + 1}次战斗")
 
-            self.check_and_enter_battle()
+            if not self.check_and_enter_battle():
+                logger.ui("已跳过馆主战，结束道馆突破")
+                return
+
             self.wait_for_battle_ready()
 
             if self.flag_guanzhan:
