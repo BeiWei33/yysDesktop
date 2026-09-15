@@ -1,3 +1,4 @@
+from .emulator import emulator
 from .exception import ViewportDetectionError
 from .log import logger
 from .viewport import viewport_registry
@@ -35,6 +36,9 @@ class Point:
     ) -> "Point":
         """从屏幕坐标反向映射到 canonical 客户区坐标。"""
         logger.info(f"from_screen: ({screen_x}, {screen_y})")
+        if emulator.enabled:
+            # 模拟器模式没有窗口变换，canonical 坐标即设备上的画面坐标
+            return cls(screen_x, screen_y)
         transform = cls._transform_for_handle(handle)
         client_x, client_y = transform.screen_to_canonical((screen_x, screen_y))
         return cls(client_x, client_y)
@@ -54,6 +58,9 @@ class Point:
     def to_screen(self, handle: int | None = None) -> tuple[int, int]:
         """将 canonical 客户区坐标映射为屏幕坐标。"""
         logger.info(f"to_screen: ({self.client_x}, {self.client_y})")
+        if emulator.enabled:
+            # 模拟器模式的输入走 adb，canonical 坐标就是最终坐标
+            return (int(self.client_x), int(self.client_y))
         return self._transform_for_handle(handle).canonical_to_screen(
             (self.client_x, self.client_y)
         )

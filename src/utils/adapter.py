@@ -75,6 +75,9 @@ class Mouse:
 
     @classmethod
     def position(cls) -> Point:
+        if emulator.enabled:
+            # 模拟器没有真正的鼠标：用最后一次点击/滑动的坐标当作"当前坐标"
+            return Point(_emulator_point.client_x, _emulator_point.client_y)
         if config.user.model_dump().get("interaction_mode", {}).get("mode") == "后台":
             hwnd = window_manager.get_current_handle()
             if hwnd is None:
