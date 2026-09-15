@@ -6,6 +6,7 @@ import win32gui
 
 from .config import GameLanguage, config
 from .decorator import log_function_call
+from .emulator import emulator
 from .log import logger
 from .mysignal import global_ms as ms
 from .viewport import viewport_registry
@@ -295,6 +296,16 @@ class GameWindowManager:
 
     def update_window_task(self):
         """更新游戏窗口信息"""
+        if emulator.enabled:
+            # 模拟器模式没有游戏窗口：画面与操作都走 adb，不搜索窗口也不报错
+            self.handles = []
+            self.current = None
+            if not self._initialized and hasattr(self, "gui_button_callback"):
+                self._initialized = True
+                self.gui_button_callback()
+            self._emit_window_update()
+            return
+
         target_handles = get_all_target_window(self._titles_to_search())
 
         if target_handles != self.handles:
@@ -355,6 +366,9 @@ class GameWindowManager:
 
     def set_foreground(self) -> bool:
         """将游戏窗口置于前台"""
+        if emulator.enabled:
+            logger.info("模拟器模式：无需前置游戏窗口")
+            return True
         if self.current is None:
             logger.ui_error("请先获取游戏窗口")
             return False
@@ -369,6 +383,9 @@ class GameWindowManager:
     @property
     def is_alive(self) -> bool:
         """检查游戏窗口是否存在"""
+        if emulator.enabled:
+            # 模拟器模式下游戏跑在模拟器里，只要 adb 通了就算活着
+            return True
         if self.current is None:
             return False
         return True

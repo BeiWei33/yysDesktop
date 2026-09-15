@@ -21,6 +21,47 @@ def test_tansuo():
     check_package(TanSuo)
 
 
+def test_configured_chapter_defaults_to_28(monkeypatch):
+    monkeypatch.setattr(tansuo_module.config.user, "tansuo_target_chapter", 28, raising=False)
+
+    assert ProductionTanSuo.configured_chapter() == 28
+
+
+def test_configured_chapter_reads_config(monkeypatch):
+    monkeypatch.setattr(tansuo_module.config.user, "tansuo_target_chapter", 1, raising=False)
+
+    assert ProductionTanSuo.configured_chapter() == 1
+
+
+@pytest.mark.parametrize("value", [29, -1, "abc", None])
+def test_configured_chapter_falls_back_on_invalid_value(monkeypatch, value):
+    monkeypatch.setattr(tansuo_module.config.user, "tansuo_target_chapter", value, raising=False)
+
+    assert ProductionTanSuo.configured_chapter() == 28
+
+
+def test_chapter_assets_empty_when_target_is_not_28(monkeypatch):
+    runner, _, _ = _make_runner(monkeypatch, ready_after=1)
+    runner.target_chapter = 1
+
+    assert runner.chapter_assets() == []
+
+
+def test_chapter_assets_used_for_chapter_28(monkeypatch):
+    runner, _, _ = _make_runner(monkeypatch, ready_after=1)
+
+    assert len(runner.chapter_assets()) == 2
+
+
+def test_ensure_target_chapter_skips_check_when_disabled(monkeypatch):
+    """目标章节为 0（不校验）时不应该有滑动或点击动作。"""
+    runner, _, events = _make_runner(monkeypatch, ready_after=10**6, list_visible=True)
+    runner.target_chapter = 0
+
+    assert runner.ensure_target_chapter() is True
+    assert events == []
+
+
 def _make_runner(
     monkeypatch,
     ready_after: int,
@@ -195,11 +236,11 @@ def test_target_entry_point_infers_row_below_previous_chapter(monkeypatch):
     assert point.client_y == 200 + runner.chapter_row_spacing
 
 
-def test_ensure_chapter_28_clicks_inferred_row_for_misread_last_row(monkeypatch):
+def test_ensure_target_chapter_clicks_inferred_row_for_misread_last_row(monkeypatch):
     # 27章下面那一行就是28章（最后一行常被截断识别成「十八」）
     runner, _, events = _make_runner(monkeypatch, ready_after=10**6, list_tail=27)
 
-    assert runner.ensure_chapter_28() is True
+    assert runner.ensure_target_chapter() is True
     clicks = [event for event in events if event[0] == "click"]
     assert clicks[0][1].client_y == 200 + runner.chapter_row_spacing
 
@@ -218,70 +259,70 @@ def test_chapter_ready_accepts_detail_page_of_chapter_28(monkeypatch):
     assert events == []
 
 
-def test_ensure_chapter_28_drags_until_chapter_appears(monkeypatch):
+def test_ensure_target_chapter_drags_until_chapter_appears(monkeypatch):
     runner, state, events = _make_runner(monkeypatch, ready_after=3)
 
-    assert runner.ensure_chapter_28() is True
+    assert runner.ensure_target_chapter() is True
     assert state["scrolled"] == 3
     # 每次拖动前都要把指针移到章节列表上，方向为向列表末尾翻
     assert [event[0] for event in events] == ["move", "drag"] * 3
     assert [event[2] for event in events if event[0] == "drag"] == [runner.chapter_drag_distance * -1] * 3
 
 
-def test_ensure_chapter_28_falls_back_to_wheel(monkeypatch):
+def test_ensure_target_chapter_falls_back_to_wheel(monkeypatch):
     drags = ProductionTanSuo.chapter_drag_attempts
     # 拖动两个方向都试完后仍然没有28章，改用滚轮
     runner, _, events = _make_runner(monkeypatch, ready_after=drags * 2 + 1)
 
-    assert runner.ensure_chapter_28() is True
+    assert runner.ensure_target_chapter() is True
     kinds = [event[0] for event in events if event[0] != "move"]
     assert kinds.count("drag") == drags * 2
     assert kinds.count("scroll") == 1
     assert events[0][0] == "move"
 
 
-def test_ensure_chapter_28_returns_none_outside_chapter_list(monkeypatch):
+def test_ensure_target_chapter_returns_none_outside_chapter_list(monkeypatch):
     runner, state, _ = _make_runner(monkeypatch, ready_after=1, list_visible=False)
 
-    assert runner.ensure_chapter_28() is None
+    assert runner.ensure_target_chapter() is None
     assert state["scrolled"] == 0
 
 
-def test_ensure_chapter_28_returns_none_on_other_chapter_detail_page(monkeypatch):
+def test_ensure_target_chapter_returns_none_on_other_chapter_detail_page(monkeypatch):
     runner, state, _ = _make_runner(monkeypatch, ready_after=1, list_visible=False, detail_chapter=21)
 
-    assert runner.ensure_chapter_28() is None
+    assert runner.ensure_target_chapter() is None
     assert state["scrolled"] == 0
 
 
-def test_ensure_chapter_28_goes_back_to_list_from_other_chapter_detail_page(monkeypatch):
+def test_ensure_target_chapter_goes_back_to_list_from_other_chapter_detail_page(monkeypatch):
     runner, state, events = _make_runner(
         monkeypatch, ready_after=1, detail_chapter=21, back_visible=True
     )
 
-    assert runner.ensure_chapter_28() is True
+    assert runner.ensure_target_chapter() is True
     # 先点左上角返回，回到列表后再滑动找到28章
     assert events[0] == ("click", "back")
     assert any(event[0] == "drag" for event in events)
     assert state["in_detail"] is False
 
 
-def test_ensure_chapter_28_scrolls_after_failed_target_click(monkeypatch):
+def test_ensure_target_chapter_scrolls_after_failed_target_click(monkeypatch):
     """28章就在眼前但点击无效时，必须滑动改变状态，不能原地重复点击。"""
     runner, _, events = _make_runner(monkeypatch, ready_after=10**6, list_tail=27, click_polls=10**6)
 
-    assert runner.ensure_chapter_28() is False
+    assert runner.ensure_target_chapter() is False
 
     kinds = [event[0] for event in events]
     first_click = kinds.index("click")
     assert "drag" in kinds[first_click:] or "scroll" in kinds[first_click:]
 
 
-def test_ensure_chapter_28_stops_after_repeated_click_failures(monkeypatch):
+def test_ensure_target_chapter_stops_after_repeated_click_failures(monkeypatch):
     runner, _, events = _make_runner(monkeypatch, ready_after=10**6, list_tail=27, click_polls=10**6)
     limit = ProductionTanSuo.chapter_click_failure_limit
 
-    assert runner.ensure_chapter_28() is False
+    assert runner.ensure_target_chapter() is False
 
     clicks = [event for event in events if event[0] == "click"]
     assert len(clicks) == limit
@@ -303,7 +344,7 @@ def test_target_entry_point_does_not_infer_row_outside_visible_area(monkeypatch)
     assert runner.target_entry_point(runner.chapter_items()) is None
 
 
-def test_ensure_chapter_28_scrolls_when_target_row_is_below_visible_area(monkeypatch):
+def test_ensure_target_chapter_scrolls_when_target_row_is_below_visible_area(monkeypatch):
     runner, _, events = _make_runner(
         monkeypatch,
         ready_after=10**6,
@@ -312,26 +353,26 @@ def test_ensure_chapter_28_scrolls_when_target_row_is_below_visible_area(monkeyp
         list_moves=False,
     )
 
-    assert runner.ensure_chapter_28() is False
+    assert runner.ensure_target_chapter() is False
 
     # 不能对着看不见的位置点击，只能滑动
     assert all(event[0] != "click" for event in events)
     assert any(event[0] in ("drag", "scroll") for event in events)
 
 
-def test_ensure_chapter_28_gives_up_after_bounded_attempts(monkeypatch):
+def test_ensure_target_chapter_gives_up_after_bounded_attempts(monkeypatch):
     runner, state, _ = _make_runner(monkeypatch, ready_after=10**6)
 
-    assert runner.ensure_chapter_28() is False
+    assert runner.ensure_target_chapter() is False
     per_pass = ProductionTanSuo.chapter_drag_attempts + ProductionTanSuo.chapter_scroll_attempts
     assert state["scrolled"] == per_pass * 2
 
 
-def test_ensure_chapter_28_switches_mechanism_when_list_does_not_move(monkeypatch):
+def test_ensure_target_chapter_switches_mechanism_when_list_does_not_move(monkeypatch):
     runner, _, events = _make_runner(monkeypatch, ready_after=10**6, list_moves=False)
     limit = ProductionTanSuo.chapter_no_movement_limit
 
-    assert runner.ensure_chapter_28() is False
+    assert runner.ensure_target_chapter() is False
 
     kinds = [event[0] for event in events if event[0] != "move"]
     # 列表不动时每种方式只试 limit 次就换下一种

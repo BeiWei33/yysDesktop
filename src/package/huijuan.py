@@ -58,9 +58,18 @@ class HuiJuan(BasePackage):
         self.IMAGE_MAP_JIEJIETUPO = self.get_image_asset("map_jiejietupo")
 
     def close_tansuo(self):
+        """关闭探索入口界面
+
+        目标章节不一定是 28 章，所以除了 28 章标题素材，也用与章节无关的
+        「探索」按钮和「出战消耗」判断当前是否停在探索入口。
+        """
         asset_image_list = load_asset(TanSuo.resource_path, "image")
-        IMAGE_TITLE_28 = get_image_asset(asset_image_list, "title_28")
-        if RuleImage(IMAGE_TITLE_28).match():
+        candidates = [
+            get_image_asset(asset_image_list, "title_28"),
+            get_image_asset(asset_image_list, "start"),
+            get_image_asset(asset_image_list, "chuzhanxiaohao"),
+        ]
+        if any(RuleImage(asset_image).match() for asset_image in candidates):
             logger.ui("当前在探索入口处，尝试关闭")
             self.check_click(self.global_assets.IMAGE_QUIT, point_type="center")
         else:

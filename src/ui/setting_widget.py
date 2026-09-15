@@ -323,6 +323,32 @@ class SettingBattleThemeCard(AppCard):
             config.update("battle_theme_recognition", status)
 
 
+class SettingTansuoChapterCard(AppCard):
+    """设置项-探索目标章节"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.APPLICATION,
+            "探索目标章节",
+            "单人探索要刷的章节。角色进度不够时调小，或选「不校验」跟随当前所在章节",
+            parent,
+        )
+
+        self.combobox = ComboBox()
+        self.combobox.addItems(["不校验"] + [f"第{i}章" for i in range(1, 29)])
+        current = config.user.tansuo_target_chapter
+        self.combobox.setCurrentIndex(current if 0 <= current <= 28 else 28)
+        self.combobox.setFixedWidth(120)
+        self.combobox.currentIndexChanged.connect(self._config_update)
+
+        self.hBoxLayout.addWidget(self.combobox)
+
+    def _config_update(self):
+        index = self.combobox.currentIndex()
+        if index != config.user.tansuo_target_chapter:
+            config.update("tansuo_target_chapter", index)
+
+
 class SettingInputMotionCard(AppCard):
     """设置项-输入运动"""
 
@@ -608,6 +634,7 @@ class SettingWidget(QWidget):
         self.language_card = SettingLanguageCard()
         self.xuanshangfengyin_card = SettingXuanshangfengyinCard()
         self.battle_theme_card = SettingBattleThemeCard()
+        self.tansuo_chapter_card = SettingTansuoChapterCard()
         self.input_motion_card = SettingInputMotionCard()
         self.remember_force_zoom_card = SettingRememberForceZoomCard()
         self.force_zoom_accepted_card = SettingForceZoomAcceptedCard()
@@ -631,6 +658,7 @@ class SettingWidget(QWidget):
         self._layout.addWidget(self.language_card)
         self._layout.addWidget(self.xuanshangfengyin_card)
         self._layout.addWidget(self.battle_theme_card)
+        self._layout.addWidget(self.tansuo_chapter_card)
         self._layout.addWidget(self.input_motion_card)
         self._layout.addWidget(self.remember_force_zoom_card)
         self._layout.addWidget(self.force_zoom_accepted_card)

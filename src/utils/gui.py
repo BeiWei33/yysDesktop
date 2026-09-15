@@ -22,6 +22,7 @@ from .announcement import check_announcements, show_all_announcements
 from .application import APP_NAME, APP_PATH, DEBUG_VERSION, VERSION
 from .config import GameLanguage, InteractionMode, config
 from .decorator import log_function_call, run_in_thread
+from .emulator import emulator
 from .event import event_thread
 from .exception import CaptureUnavailableError, ViewportDetectionError
 from .function import is_Chinese_Path
@@ -657,6 +658,9 @@ class MainWindow(FluentWindow):
 
     def _update_screen_resolution_handle(self):
         """更新屏幕分辨率显示"""
+        if emulator.enabled:
+            # 模拟器模式没有游戏窗口，屏幕分辨率由模拟器决定
+            return
         resolution = window_manager.current_window_resolution
         if resolution:
             self.windowManagerInterface.update_screen_resolution(resolution.screen_size[0], resolution.screen_size[1])

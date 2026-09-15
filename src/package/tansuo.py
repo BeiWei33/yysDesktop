@@ -1,4 +1,5 @@
 from ..utils.adapter import Mouse
+from ..utils.config import config
 from ..utils.decorator import log_function_call
 from ..utils.event import event_thread
 from ..utils.exception import CustomException, DailyLimitException, GUIStopException
@@ -49,11 +50,14 @@ def parse_chapter_number(text: str) -> int | None:
 
 
 class TanSuoChapterUnavailable(CustomException):
-    """未能切换到28章"""
+    """未能切换到探索目标章节"""
 
-    def __init__(self, *args):
+    def __init__(self, *args, chapter: int | None = None):
         super().__init__(*args)
-        logger.ui_error("异常捕获：未能切换到28章，请手动切换后重试")
+        if chapter:
+            logger.ui_error(f"异常捕获：未能切换到{chapter}章，请手动切换后重试")
+        else:
+            logger.ui_error("异常捕获：未能切换到探索目标章节，请手动切换后重试")
 
 
 class TanSuo(BasePackage):
@@ -93,13 +97,13 @@ class TanSuo(BasePackage):
     chapter_no_movement_limit: int = 4
     """连续多少次滑动后列表没有变化，就换下一种滑动方式"""
     chapter_click_failure_limit: int = 4
-    """识别到28章但点击无效多少次后停止尝试（避免一直点同一个位置）"""
+    """识别到目标章节但点击无效多少次后停止尝试（避免一直点同一个位置）"""
     chapter_switch_attempts: int = 5
-    """点击28章后等待标题出现的检查次数"""
+    """点击目标章节后等待标题出现的检查次数"""
     chapter_fix_interval: int = 12
-    """连续多少次未识别到探索界面后尝试切换28章"""
+    """连续多少次未识别到探索界面后尝试切换目标章节"""
     chapter_fix_max_failures: int = 2
-    """连续多少次切换28章失败后停止任务"""
+    """连续多少次切换目标章节失败后停止任务"""
 
     @log_function_call
     def __init__(self, n: int = 0, temp_pop: bool = False) -> None:
@@ -107,9 +111,29 @@ class TanSuo(BasePackage):
         self.has_temp_pop = temp_pop
         if self.has_temp_pop:
             logger.ui("已启用临时弹窗关闭功能")
+        self.target_chapter = self.configured_chapter()
+        if self.target_chapter == 0:
+            logger.ui("探索目标章节：不校验（跟随当前章节）")
+        elif self.target_chapter != type(self).target_chapter:
+            logger.ui(f"探索目标章节：第{self.target_chapter}章")
         self.start_click_count = 0  # 连续点击IMAGE_START的次数
         self.chapter_miss_count = 0  # 连续未识别到探索界面的次数
-        self.chapter_fix_failures = 0  # 连续切换28章失败的次数
+        self.chapter_fix_failures = 0  # 连续切换目标章节失败的次数
+
+    @staticmethod
+    def configured_chapter() -> int:
+        """从配置读取探索目标章节，0 表示不做章节校验"""
+        try:
+            chapter = int(getattr(config.user, "tansuo_target_chapter", 28))
+        except (TypeError, ValueError):
+            return 28
+        return chapter if 0 <= chapter <= 28 else 28
+
+    def chapter_assets(self) -> list:
+        """28 章专属素材，目标章节不是 28 时不参与匹配"""
+        if self.target_chapter == 28:
+            return [self.IMAGE_TANSUO_28, self.IMAGE_TITLE_28]
+        return []
 
     @staticmethod
     def description() -> None:
@@ -136,8 +160,8 @@ class TanSuo(BasePackage):
         msg_title = True
         self.current_asset_list = [
             self.IMAGE_CHUZHANXIAOHAO,
-            self.IMAGE_TANSUO_28,
-            self.IMAGE_TITLE_28,
+            self.IMAGE_START,
+            *self.chapter_assets(),
         ]
         self.log_current_asset_list()
 
@@ -153,18 +177,27 @@ class TanSuo(BasePackage):
                 msg_title = False
                 self.title_error_msg()
 
+            # 目标章节不是 28 章时没有对应的列表/标题素材，改为按文字识别进入目标章节
+            if self.target_chapter not in (0, 28) and self.chapter_ready():
+                self.chapter_miss_count = 0
+                return
+
             self.try_fix_chapter()
 
     def chapter_ready(self) -> bool:
-        """28章是否已经就绪
+        """目标章节是否已经就绪
 
-        已经显示28章标题或当前章节号就是28章，说明已经就绪；
-        否则在章节列表里按识别到的文字位置点击28章，避免图像误匹配到其它章节。
+        已经显示目标章节标题或当前章节号就是目标章节，说明已经就绪；
+        否则在章节列表里按识别到的文字位置点击目标章节，避免图像误匹配到其它章节。
+        目标章节为 0 时表示不做章节校验（角色进度只解锁了少数章节时用）。
 
         Returns:
-            bool: 是否已处于28章
+            bool: 是否已处于目标章节
         """
-        if self.on_chapter_28():
+        if self.target_chapter == 0:
+            return True
+
+        if self.on_target_chapter():
             return True
 
         point = self.find_chapter_entry(self.target_chapter)
@@ -180,7 +213,7 @@ class TanSuo(BasePackage):
             point (Point): 章节条目坐标
 
         Returns:
-            bool: 是否成功切换到28章
+            bool: 是否成功切换到目标章节
         """
         logger.ui(f"点击章节列表中的{self.target_chapter}章")
         Mouse.click(point)
@@ -191,13 +224,15 @@ class TanSuo(BasePackage):
                 raise GUIStopException
 
             sleep(1)
-            if self.on_chapter_28():
+            if self.on_target_chapter():
                 return True
         return False
 
-    def on_chapter_28(self) -> bool:
-        """当前是否已经是28章（标题已显示，或章节号就是28）"""
-        if RuleImage(self.IMAGE_TITLE_28).match():
+    def on_target_chapter(self) -> bool:
+        """当前是否已经是目标章节（标题已显示，或章节号就是目标章节）"""
+        if self.target_chapter == 28 and RuleImage(self.IMAGE_TITLE_28).match():
+            return True
+        if self.target_chapter == 0:
             return True
         return self.current_chapter() == self.target_chapter
 
@@ -261,7 +296,7 @@ class TanSuo(BasePackage):
         """在章节列表上滑动
 
         Args:
-            direction (int): -1 向列表末尾（28章方向）翻，1 向列表开头翻
+            direction (int): -1 向列表末尾（章节号增大方向）翻，1 向列表开头翻
             use_drag (bool): 使用拖动代替滚轮
         """
         Mouse.move(point=Point(*self.chapter_scroll_point))
@@ -343,17 +378,21 @@ class TanSuo(BasePackage):
         logger.info(f"识别到第{last_number}章，按行间距推断第{self.target_chapter}章位置")
         return Point(last_point.client_x, inferred_y)
 
-    def ensure_chapter_28(self) -> bool | None:
-        """确保当前选择的是28章
+    def ensure_target_chapter(self) -> bool | None:
+        """确保当前选择的是目标章节
 
-        游戏有时会停留在其它章节，此时识别不到28章：
+        游戏有时会停留在其它章节，此时识别不到目标章节：
         - 在章节详情界面：先点左上角返回章节列表；
-        - 在章节列表界面：滑动列表找到并点击28章，拖动和滚轮、两个方向都会尝试。
+        - 在章节列表界面：滑动列表找到并点击目标章节，拖动和滚轮、两个方向都会尝试。
+        目标章节为 0 时不做章节校验，直接返回 True。
 
         Returns:
-            bool | None: True 已切换到28章，False 在章节列表界面但切换失败，
+            bool | None: True 已处于目标章节，False 在章节列表界面但切换失败，
                 None 当前不在可处理的界面（不做处理，继续等待）
         """
+        if self.target_chapter == 0:
+            return True
+
         if self.chapter_ready():
             return True
 
@@ -377,8 +416,8 @@ class TanSuo(BasePackage):
                     if bool(event_thread):
                         raise GUIStopException
 
-                    # 28章标题已出现（模板匹配，开销很小）
-                    if RuleImage(self.IMAGE_TITLE_28).match():
+                    # 目标章节标题已出现（仅 28 章有标题素材，模板匹配开销很小）
+                    if self.target_chapter == 28 and RuleImage(self.IMAGE_TITLE_28).match():
                         return True
 
                     # 看不到章节列表说明不在探索界面，不要乱滑，避免影响其它界面
@@ -399,7 +438,7 @@ class TanSuo(BasePackage):
                         no_movement = 0
                     previous = numbers
 
-                    # 已经能看到28章就直接点击（文字识别定位，避免图像误匹配）
+                    # 已经能看到目标章节就直接点击（文字识别定位，避免图像误匹配）
                     target = self.target_entry_point(items)
                     if target is not None:
                         if self.click_chapter_entry(target):
@@ -415,11 +454,11 @@ class TanSuo(BasePackage):
                     self.scroll_chapter_list(direction, use_drag=use_drag)
                     sleep(1.0, 1.3)  # 等待滚动动画结束再识别
 
-        logger.ui_error("未识别到28章，请手动切换章节")
+        logger.ui_error(f"未识别到{self.target_chapter}章，请手动切换章节")
         return False
 
     def try_fix_chapter(self, force: bool = False) -> None:
-        """尝试切换到28章
+        """尝试切换到目标章节
 
         Args:
             force (bool): 忽略连续未识别的计数，立即尝试
@@ -429,7 +468,7 @@ class TanSuo(BasePackage):
             return
 
         self.chapter_miss_count = 0
-        result = self.ensure_chapter_28()
+        result = self.ensure_target_chapter()
         if result is None:  # 还没进入探索界面，继续等待
             return
         if result:
@@ -438,7 +477,9 @@ class TanSuo(BasePackage):
 
         self.chapter_fix_failures += 1
         if self.chapter_fix_failures >= self.chapter_fix_max_failures:
-            raise TanSuoChapterUnavailable("未识别到28章，已停止探索任务")
+            raise TanSuoChapterUnavailable(
+                f"未识别到{self.target_chapter}章，已停止探索任务", chapter=self.target_chapter
+            )
 
     @log_function_call
     def fight(self) -> None:
@@ -521,9 +562,8 @@ class TanSuo(BasePackage):
         self.check_title()
         self.current_asset_list = [
             self.IMAGE_CHUZHANXIAOHAO,
-            self.IMAGE_TANSUO_28,
-            self.IMAGE_TITLE_28,
             self.IMAGE_START,
+            *self.chapter_assets(),
         ]
 
         while self.n < self.max:
@@ -532,7 +572,10 @@ class TanSuo(BasePackage):
 
             result = check_image_once(self.current_asset_list)
             if result is None:
-                # 游戏可能停留在其它章节，导致识别不到28章
+                if self.target_chapter != 0 and self.chapter_ready():
+                    # 章节列表界面：点进目标章节后继续循环
+                    continue
+                # 游戏可能停留在其它章节，导致识别不到目标章节
                 self.try_fix_chapter()
                 continue
 
@@ -549,7 +592,7 @@ class TanSuo(BasePackage):
                     Mouse.click(point)
                     sleep(3)  # 等待行动动画
 
-                case self.IMAGE_TITLE_28.name:
+                case self.IMAGE_TITLE_28.name | self.IMAGE_START.name:
                     logger.ui("准备进入探索")
                     self.check_click(self.IMAGE_START)
                     self.start_click_count += 1

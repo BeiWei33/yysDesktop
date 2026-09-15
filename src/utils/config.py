@@ -198,6 +198,8 @@ class UserConfig(BaseModel):
     """交互模式"""
     emulator: EmulatorConfig = EmulatorConfig()
     """模拟器（MuMu）配置"""
+    tansuo_target_chapter: int = 28
+    """单人探索的目标章节（1-28），角色进度不够时可以调小"""
     function_order: list[str] = []
     """功能排序，可通过GameFunctionSelectorWidget修改"""
     battle_theme_recognition: bool = False
