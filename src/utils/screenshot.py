@@ -123,10 +123,15 @@ class ScreenShot:
         last_failure: Exception | None = None
         last_reason = "capture returned None"
 
-        # 模拟器模式：设备画面只能通过 adb 截图，且本身就是 16:9，不需要视口检测
+        # 模拟器模式：设备画面只能通过 adb 截图，本身就是 16:9，不需要视口检测
         if emulator.enabled:
             image = emulator.screenshot()
             self._raw_image = image
+            # 必须按 rect 裁剪：区域 OCR 会把这个原点当作结果偏移加回去，
+            # 不裁剪的话识别到的是整屏，坐标会整体偏移出画面。
+            if self.rect is not None:
+                x, y, width, height = self.rect
+                image = image.crop((x, y, x + width, y + height))
             self._image = image
             return
 
