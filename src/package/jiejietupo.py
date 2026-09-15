@@ -3,6 +3,8 @@ import time
 from enum import Enum
 from typing import Literal
 
+from PIL import Image
+
 from ..utils.adapter import KeyBoard, Mouse
 from ..utils.decorator import log_function_call
 from ..utils.event import event_thread
@@ -223,8 +225,31 @@ class JieJieTuPoGeRen(JieJieTuPo):
         self.IMAGE_REFRESH_TRUE = self.get_image_asset("queding")
         self.IMAGE_FIGHT_AGAIN = self.get_image_asset("zaicitiaozhan")
 
+    @staticmethod
+    def union_region(*regions: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        """求多个区域的并集，用于一次截图覆盖多个识别区域"""
+        x1 = min(region[0] for region in regions)
+        y1 = min(region[1] for region in regions)
+        x2 = max(region[0] + region[2] for region in regions)
+        y2 = max(region[1] + region[3] for region in regions)
+        return (x1, y1, x2 - x1, y2 - y1)
+
+    @staticmethod
+    def crop_region(
+        image: Image.Image,
+        region: tuple[int, int, int, int],
+        base: tuple[int, int, int, int],
+    ) -> Image.Image:
+        """从并集截图里裁出单个区域"""
+        x = region[0] - base[0]
+        y = region[1] - base[1]
+        return image.crop((x, y, x + region[2], y + region[3]))
+
     def list_num_xunzhang(self, only_victory: bool = False) -> list[int]:
         """返回每个结界的勋章数列表
+
+        每个结界只截一次图（覆盖「已攻破」与「勋章」两个区域），再在内存里裁剪复用。
+        原先一个结界最多要截 7 次图，模拟器模式下每次截图都是一次 adb 往返，会非常慢。
 
         Args:
             only_victory (bool): 是否只返回已攻破的勋章数
@@ -237,6 +262,7 @@ class JieJieTuPoGeRen(JieJieTuPo):
         """
         logger.ui("正在遍历结界勋章")
         alist = [0]  # 第一个数固定为0，方便后续9个计数
+        medal_images: list[Image.Image | None] = [None] * 10
 
         for i in range(1, 10):
             if bool(event_thread):
@@ -244,9 +270,15 @@ class JieJieTuPoGeRen(JieJieTuPo):
 
             x = self.tupo_geren_x[(i + 2) % 3 + 1]
             y = self.tupo_geren_y[(i + 2) // 3]
-            region = (x + 40, y - 10, 185 + 20, 90)
+            region_success = (x + 40, y - 10, 185 + 20, 90)
+            region_xunzhang = (x - 25, y + 40, 185 + 20, 90 - 20)
+            base = self.union_region(region_success, region_xunzhang)
+            snapshot = ScreenShot(rect=base).get_image()
+            medal_images[i] = self.crop_region(snapshot, region_xunzhang, base)
 
-            if RuleImage(self.IMAGE_SUCCESS, region=region).match():
+            if RuleImage(self.IMAGE_SUCCESS, region=region_success).match(
+                self.crop_region(snapshot, region_success, base)
+            ):
                 logger.info(f"第{i}个结界：已攻破")
                 alist.append(-1)
             else:
@@ -277,30 +309,35 @@ class JieJieTuPoGeRen(JieJieTuPo):
 
                 x = self.tupo_geren_x[(i + 2) % 3 + 1]
                 y = self.tupo_geren_y[(i + 2) // 3]
+                if alist[i] == -1:
+                    logger.info(f"第{i}个结界：已攻破，跳过勋章识别")
+                    continue
+
                 region = (x - 25, y + 40, 185 + 20, 90 - 20)
+                image = medal_images[i]
                 logger.info(f"检测第{i}个结界勋章数")
 
-                if RuleImage(self.IMAGE_XUNZHANG_5, region=region).match(logger_lever="ERROR"):
+                if RuleImage(self.IMAGE_XUNZHANG_5, region=region).match(image, logger_lever="ERROR"):
                     alist[i] = 5
                     logger.info(f"第{i}个结界：5")
                     continue
-                if RuleImage(self.IMAGE_XUNZHANG_4, region=region).match(logger_lever="ERROR"):
+                if RuleImage(self.IMAGE_XUNZHANG_4, region=region).match(image, logger_lever="ERROR"):
                     alist[i] = 4
                     logger.info(f"第{i}个结界：4")
                     continue
-                if RuleImage(self.IMAGE_XUNZHANG_3, region=region).match(logger_lever="ERROR"):
+                if RuleImage(self.IMAGE_XUNZHANG_3, region=region).match(image, logger_lever="ERROR"):
                     alist[i] = 3
                     logger.info(f"第{i}个结界：3")
                     continue
-                if RuleImage(self.IMAGE_XUNZHANG_2, region=region).match(logger_lever="ERROR"):
+                if RuleImage(self.IMAGE_XUNZHANG_2, region=region).match(image, logger_lever="ERROR"):
                     alist[i] = 2
                     logger.info(f"第{i}个结界：2")
                     continue
-                if RuleImage(self.IMAGE_XUNZHANG_1, region=region).match(logger_lever="ERROR"):
+                if RuleImage(self.IMAGE_XUNZHANG_1, region=region).match(image, logger_lever="ERROR"):
                     alist[i] = 1
                     logger.info(f"第{i}个结界：1")
                     continue
-                if RuleImage(self.IMAGE_XUNZHANG_0, region=region).match(logger_lever="ERROR"):
+                if RuleImage(self.IMAGE_XUNZHANG_0, region=region).match(image, logger_lever="ERROR"):
                     alist[i] = 0
                     logger.info(f"第{i}个结界：0")
                     logger.info(f"第{i}个结界：未攻破")
