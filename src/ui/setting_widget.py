@@ -429,6 +429,12 @@ class SettingInteractionModeCard(ExpandGroupSettingCard):
         self.backend_screenshot_combobox.addItems(default_config.interaction_mode["backend"]["screenshot_method"])
         self.backend_screenshot_combobox.currentIndexChanged.connect(self._config_update_backend_screenshot_method)
 
+        self.emulator_switch = SwitchButton()
+        self.emulator_switch.setOnText("")
+        self.emulator_switch.setOffText("")
+        self.emulator_switch.setChecked(config.user.emulator.enabled)
+        self.emulator_switch.checkedChanged.connect(self._config_update_emulator)
+
         self.viewLayout.setContentsMargins(0, 0, 0, 0)
         self.viewLayout.setSpacing(0)
 
@@ -440,6 +446,12 @@ class SettingInteractionModeCard(ExpandGroupSettingCard):
             "后台截图模式",
             "切换后可在窗口管理处预览是否能够正常截图显示",
             self.backend_screenshot_combobox,
+        )
+        self.addGroup(
+            FluentIcon.APPLICATION,
+            "使用模拟器(MuMu)",
+            "手机版客户端在模拟器里无法用Win32截图/后台消息，开启后改为通过adb截图与点击",
+            self.emulator_switch,
         )
 
         self.setExpand(True)
@@ -473,6 +485,11 @@ class SettingInteractionModeCard(ExpandGroupSettingCard):
         text = self.backend_screenshot_combobox.currentText()
         if text != config.user.interaction_mode.backend.screenshot_method:
             config.update("interaction_mode.backend.screenshot_method", text)
+
+    def _config_update_emulator(self):
+        status = self.emulator_switch.isChecked()
+        if status != config.user.emulator.enabled:
+            config.update("emulator.enabled", status)
 
 
 class SettingUpdateCard(ExpandGroupSettingCard):

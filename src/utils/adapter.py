@@ -8,6 +8,7 @@ import win32api
 import win32con
 
 from .config import config
+from .emulator import emulator
 from .event import event_thread, event_xuanshang
 from .exception import GUIStopException, ViewportDetectionError
 from .input_motion import generate_bezier_points, sample_bounded_delay, sample_centered_point
@@ -17,6 +18,23 @@ from .viewport import viewport_registry
 from .window import window_manager
 
 _back_click_point = Point(0, 0)  # 当前后台逻辑坐标
+_emulator_point = Point(0, 0)  # 模拟器模式下的当前坐标
+"""模拟器没有悬停概念，用一个变量记住"当前坐标"，供拖动/滚轮作为起点"""
+
+
+def _emulator_resolve(point: Point | None, x=None, y=None, xOffset=None, yOffset=None) -> Point:
+    """把各种入参统一成模拟器模式下的目标坐标"""
+    if point is not None:
+        return Point(point.client_x, point.client_y)
+    if x is not None or y is not None:
+        return Point(
+            int(x) if x is not None else _emulator_point.client_x,
+            int(y) if y is not None else _emulator_point.client_y,
+        )
+    return Point(
+        _emulator_point.client_x + int(xOffset or 0),
+        _emulator_point.client_y + int(yOffset or 0),
+    )
 _back_click_handle: int | None = None
 _last_input_mode: str | None = None
 
@@ -290,6 +308,10 @@ class Mouse:
         duration: float = 0,
         tween=linear,
     ):
+        if emulator.enabled:
+            global _emulator_point
+            _emulator_point = _emulator_resolve(point, x, y, xOffset, yOffset)
+            return
         if config.user.model_dump().get("interaction_mode").get("mode") == "后台":
             cls._move_backend(point, x, y, xOffset, yOffset, duration)
         else:
@@ -354,6 +376,12 @@ class Mouse:
             delay = sample_bounded_delay(wait, rng=cls._rng) if cls._motion_enabled() else wait
             time.sleep(delay)
 
+        if emulator.enabled:
+            global _emulator_point
+            target = cls._sample_click_point(point)
+            _emulator_point = _emulator_resolve(target)
+            emulator.tap(_emulator_point.client_x, _emulator_point.client_y)
+            return
         if config.user.model_dump().get("interaction_mode").get("mode") == "后台":
             cls._click_backend(cls._sample_click_point(point), duration)
         else:
@@ -439,6 +467,13 @@ class Mouse:
     @classmethod
     def drag(cls, x_offset: int = None, y_offset: int = None, duration: float = 0.5):
         """Drag after moving the pointer to the intended start position."""
+        if emulator.enabled:
+            global _emulator_point
+            start = _emulator_point
+            end = Point(start.client_x + int(x_offset or 0), start.client_y + int(y_offset or 0))
+            emulator.swipe(start.client_x, start.client_y, end.client_x, end.client_y, int(duration * 1000))
+            _emulator_point = end
+            return
         if config.user.model_dump().get("interaction_mode").get("mode") == "后台":
             cls._drag_backend(x_offset, y_offset, duration)
         else:
@@ -465,6 +500,18 @@ class Mouse:
     @classmethod
     def scroll(cls, distance: int) -> None:
         """Scroll the backend window."""
+        if emulator.enabled:
+            # 触摸屏没有滚轮：用竖直滑动模拟，方向与滚轮一致（负值=向下翻）
+            start = _emulator_point
+            emulator.swipe(
+                start.client_x,
+                start.client_y,
+                start.client_x,
+                start.client_y + int(distance * 0.5),
+                300,
+            )
+            logger.info(f"emulator scroll ({distance})")
+            return
         if config.user.model_dump().get("interaction_mode").get("mode") == "后台":
             cls._scroll_backend(distance)
         else:
@@ -504,6 +551,11 @@ class KeyBoard:
 
         event_xuanshang.wait()
         logger.info(f"Sending key: {key.upper()}")
+
+        if emulator.enabled:
+            # 模拟器没有键盘消息：esc/enter 映射为安卓的返回键/回车键
+            emulator.keyevent("esc" if key.lower() == "esc" else "enter")
+            return
 
         if config.user.model_dump().get("interaction_mode").get("mode") == "后台":
             cls._backend_operation(key)

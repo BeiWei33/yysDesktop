@@ -7,6 +7,7 @@ import win32ui
 from PIL import Image, ImageGrab
 
 from .config import InteractionMode, ScreenshotMethod, config
+from .emulator import emulator
 from .exception import CaptureUnavailableError, ViewportDetectionError
 from .log import logger
 from .viewport import (
@@ -44,10 +45,11 @@ class ScreenShot:
             self.gamewindow = handle
         else:
             self.gamewindow = GameWindow(handle)
-        if self.gamewindow is None:
+        if self.gamewindow is None and not emulator.enabled:
             raise CaptureUnavailableError(None, 0, "no game window selected")
 
-        self.hwnd = int(self.gamewindow.handle)
+        # 模拟器模式的画面来自 adb，没有游戏窗口
+        self.hwnd = int(self.gamewindow.handle) if self.gamewindow is not None else 0
         self.rect = rect
         self._log = _log
         self._debug = debug
@@ -120,6 +122,14 @@ class ScreenShot:
     def _capture_and_normalize(self) -> None:
         last_failure: Exception | None = None
         last_reason = "capture returned None"
+
+        # 模拟器模式：设备画面只能通过 adb 截图，且本身就是 16:9，不需要视口检测
+        if emulator.enabled:
+            image = emulator.screenshot()
+            self._raw_image = image
+            self._image = image
+            return
+
         backend = config.user.interaction_mode.mode == InteractionMode.BACKEND
         backend_method = self._backend_method() if backend else None
         capture_method = (

@@ -105,6 +105,19 @@ class InteractionModeConfig(BaseModel):
     backend: BackendConfig = BackendConfig()
 
 
+class EmulatorConfig(BaseModel):
+    """模拟器（MuMu）配置"""
+
+    enabled: bool = False
+    """是否使用模拟器：手机版客户端在模拟器里必须走 adb 截图与输入"""
+    adb_path: str = ""
+    """adb 路径，留空自动查找 MuMu 自带的 adb"""
+    device_serial: str = ""
+    """设备序列号，留空自动连接并选择运行中的设备"""
+    package_name: str = "com.netease.onmyoji"
+    """游戏包名，用于确认游戏在前台"""
+
+
 class LogColorConfig(BaseModel):
     """日志颜色配置"""
 
@@ -183,6 +196,8 @@ class UserConfig(BaseModel):
     """系统通知"""
     interaction_mode: InteractionModeConfig = InteractionModeConfig()
     """交互模式"""
+    emulator: EmulatorConfig = EmulatorConfig()
+    """模拟器（MuMu）配置"""
     function_order: list[str] = []
     """功能排序，可通过GameFunctionSelectorWidget修改"""
     battle_theme_recognition: bool = False
