@@ -29,6 +29,7 @@ from ..utils.application import (
     QQ_GROUP_LINK,
 )
 from ..utils.config import DEFAULT_LOG_COLORS, InteractionMode, LogColorLevel, config, default_config
+from ..utils.log import logger
 from .game_function_selector_widget import GameFunctionSelectorWidget
 
 
@@ -393,8 +394,11 @@ class SettingEmulatorDeviceCard(AppCard):
         def worker():
             try:
                 devices = emulator.list_devices()
-            except Exception:  # noqa: BLE001
+            except Exception as error:  # noqa: BLE001
+                logger.ui_error(f"枚举模拟器设备失败：{error}")
                 devices = []
+            if not devices:
+                logger.ui_warn("没有检测到模拟器设备，请确认模拟器已启动，或检查设置里的开关是否打开")
             self.devices_ready.emit(devices)
 
         threading.Thread(target=worker, daemon=True).start()

@@ -55,8 +55,14 @@ class EmulatorError(Exception):
 
 
 def _run(args: list[str], timeout: int = 20) -> subprocess.CompletedProcess:
+    """执行子进程
+
+    打包成无控制台程序后，子进程可能继承到无效的 stdin 句柄而启动失败，
+    显式给 DEVNULL 可以避免这类问题。
+    """
     return subprocess.run(
         args,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         timeout=timeout,
         creationflags=WINDOWS_NO_WINDOW,
@@ -181,22 +187,39 @@ class Emulator:
             list[dict]: 每项包含 serial、resolution、package、is_game
         """
         if not self.enabled:
+            logger.warning("枚举模拟器设备：模拟器模式未开启")
             return []
         if self.adb_path is None:
             self.adb_path = self.find_adb()
         if self.adb_path is None:
+            logger.ui_error("枚举模拟器设备：未找到 adb")
             return []
 
+        logger.info(f"枚举模拟器设备：adb={self.adb_path}")
         if connect_ports:
             self.connect_ports()
 
+        try:
+            serials = self._eligible_devices()
+        except Exception as error:  # noqa: BLE001
+            logger.ui_error(f"枚举模拟器设备失败（adb devices）：{error}")
+            return []
+        if not serials:
+            logger.ui_error("枚举模拟器设备：adb 没有返回任何设备，请确认模拟器已启动")
+            return []
+
         devices = []
-        for serial in self._eligible_devices():
-            package = self._focused_package(serial)
+        for serial in serials:
+            try:
+                package = self._focused_package(serial)
+                resolution = self._device_size(serial)
+            except Exception as error:  # noqa: BLE001
+                logger.ui_error(f"读取设备 {serial} 信息失败：{error}")
+                package, resolution = "", ""
             devices.append(
                 {
                     "serial": serial,
-                    "resolution": self._device_size(serial),
+                    "resolution": resolution,
                     "package": package,
                     "is_game": self._is_game_package(package),
                 }
