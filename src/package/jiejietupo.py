@@ -628,9 +628,11 @@ class JieJieTuPoGeRen(JieJieTuPo):
 
             self.list_xunzhang = self.list_num_xunzhang()
             self.tupo_victory = self.list_xunzhang.count(-1)
-            if self.tupo_victory == 3:
+            if self.tupo_victory >= 3:
+                # 3 胜刷新：已经攻破 3 个或更多（列表里本来就攻破了一部分）都刷新
+                logger.ui(f"已攻破{self.tupo_victory}个，刷新列表")
                 self.refresh()
-            elif self.tupo_victory < 3:
+            else:
                 logger.ui(f"已攻破{self.tupo_victory}个")
                 if self.fighting():
                     no_progress = 0
@@ -642,9 +644,6 @@ class JieJieTuPoGeRen(JieJieTuPo):
                         return
                     logger.ui_warn(f"没有可进攻的结界，刷新列表（第{no_progress}次）")
                     self.refresh()
-            elif self.tupo_victory > 3:
-                logger.ui_warn("暂不支持大于3个，请自行处理")
-                return
 
     def resolve_level_failure(self, max_attempts: int = 30) -> bool:
         """稳定失败结果：纠正假失败，或在真失败时开始再次挑战。"""
