@@ -85,7 +85,12 @@ class Emulator:
     def enabled(self) -> bool:
         return bool(_config_value("enabled", False))
 
-    def _adb(self, *args: str, timeout: int = 20) -> subprocess.CompletedProcess:
+    def _adb(self, *args: str, timeout: int = 6) -> subprocess.CompletedProcess:
+        """执行 adb 命令
+
+        timeout 默认压得比较短：这些调用有时会发生在界面线程上（例如刷新设备列表），
+        单个命令卡住太久会让整个界面看起来像卡死。
+        """
         if self.adb_path is None:
             raise EmulatorError("未找到 adb")
         return _run([str(self.adb_path), *args], timeout=timeout)

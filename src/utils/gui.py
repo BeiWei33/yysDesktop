@@ -670,7 +670,8 @@ class MainWindow(FluentWindow):
         combobox.clear()
 
         try:
-            devices = emulator.list_devices()
+            # 不在这里连接各开号端口：这段代码运行在界面线程上，只读当前已知的设备
+            devices = emulator.list_devices(connect_ports=False)
         except Exception as error:  # noqa: BLE001
             logger.ui_error(f"枚举模拟器设备失败：{error}")
             devices = []

@@ -1,6 +1,8 @@
 from typing import ClassVar
 
-from PySide6.QtCore import Qt
+import threading
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import (
@@ -350,7 +352,12 @@ class SettingTansuoChapterCard(AppCard):
 
 
 class SettingEmulatorDeviceCard(AppCard):
-    """设置项-模拟器设备（多开时选择要操作的那一个）"""
+    """设置项-模拟器设备（多开时选择要操作的那一个）
+
+    枚举设备要执行 adb 命令，必须放到后台线程，否则会卡住界面。
+    """
+
+    devices_ready = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(
@@ -361,7 +368,6 @@ class SettingEmulatorDeviceCard(AppCard):
         )
 
         self._loading = False
-        self._loaded = False
         self.combobox = ComboBox()
         self.combobox.setFixedWidth(260)
         self.combobox.currentIndexChanged.connect(self._config_update)
@@ -372,31 +378,46 @@ class SettingEmulatorDeviceCard(AppCard):
         self.hBoxLayout.addWidget(self.combobox)
         self.hBoxLayout.addWidget(self.refresh_button)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        if not self._loaded:
-            self._loaded = True
-            self.reload_devices()
+        self.devices_ready.connect(self._apply_devices)
+        self._fill_combo([])
 
     def reload_devices(self):
-        """重新枚举模拟器设备（会执行 adb 命令，略微耗时）"""
+        """后台枚举模拟器设备（adb 命令不能放在界面线程里）"""
+        if self._loading:
+            return
         self._loading = True
-        try:
-            self.combobox.clear()
-            self.combobox.addItem("自动", userData="")
-            for device in emulator.list_devices():
-                label = device["serial"]
-                if device["resolution"]:
-                    label += f"  {device['resolution']}"
-                if device["is_game"]:
-                    label += "  · 阴阳师运行中"
-                self.combobox.addItem(label, userData=device["serial"])
+        self.refresh_button.setEnabled(False)
+        self.combobox.clear()
+        self.combobox.addItem("检测中…", userData="")
 
-            current = config.user.emulator.device_serial or ""
-            index = self.combobox.findData(current)
-            self.combobox.setCurrentIndex(index if index >= 0 else 0)
-        finally:
-            self._loading = False
+        def worker():
+            try:
+                devices = emulator.list_devices()
+            except Exception:  # noqa: BLE001
+                devices = []
+            self.devices_ready.emit(devices)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_devices(self, devices: list):
+        self._loading = False
+        self.refresh_button.setEnabled(True)
+        self._fill_combo(devices)
+
+    def _fill_combo(self, devices: list):
+        self.combobox.clear()
+        self.combobox.addItem("自动", userData="")
+        for device in devices:
+            label = device["serial"]
+            if device["resolution"]:
+                label += f"  {device['resolution']}"
+            if device["is_game"]:
+                label += "  · 阴阳师运行中"
+            self.combobox.addItem(label, userData=device["serial"])
+
+        current = config.user.emulator.device_serial or ""
+        index = self.combobox.findData(current)
+        self.combobox.setCurrentIndex(index if index >= 0 else 0)
 
     def _config_update(self):
         if self._loading:
