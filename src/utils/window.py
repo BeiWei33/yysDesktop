@@ -303,9 +303,11 @@ class GameWindowManager:
             if not getattr(self, "_emulator_listed", False):
                 # 设备列表只枚举一次（每次都要跑 adb，不适合放在定时任务里）
                 self._emulator_listed = True
-                self._initialized = True
                 if hasattr(self, "gui_button_callback"):
                     self.gui_button_callback()
+                # 窗口列表回调在模拟器模式下用来列出设备（见 gui.refresh_window_list）
+                if hasattr(self, "gui_window_manager_list_callback"):
+                    self.gui_window_manager_list_callback([])
             self._emit_window_update()
             return
 
