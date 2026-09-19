@@ -348,9 +348,12 @@ class BasePackage:
         Returns:
             bool: 是否识别到并点击了准备按钮
         """
+        # 准备按钮是静止元素（不属于"会动的小怪"或"动作后会变的结界"），
+        # 所以截一帧同时匹配新旧两种素材，省掉一次截图（模拟器模式下约 0.35 秒）。
+        screenshot = ScreenShot()
         for image in (self.global_assets.IMAGE_READY_NEW, self.global_assets.IMAGE_READY_OLD):
             rule = RuleImage(image)
-            if rule.match():
+            if rule.match(screenshot):
                 logger.ui("点击准备")
                 Mouse.click(rule.center_point())
                 sleep(1.0, 1.5)
