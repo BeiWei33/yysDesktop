@@ -6,6 +6,7 @@ from ..utils.application import SCREENSHOT_DIR_PATH
 from ..utils.assets import AssetOcr
 from ..utils.config import InteractionMode, config
 from ..utils.decorator import log_function_call, run_in_thread
+from ..utils.emulator import emulator
 from ..utils.event import event_thread
 from ..utils.exception import CustomException, GUIStopException
 from ..utils.function import finish_random_left_right, prevent_sleep, sleep
@@ -425,7 +426,13 @@ class BasePackage:
         config.runtime.xuanshangfengyin.reset()
 
         need_prevent_sleep: bool = False  # 是否需要防止休眠
-        if config.user.interaction_mode.mode == InteractionMode.FRONTEND:
+        if emulator.enabled:
+            # 每次任务开始时把当前设备打出来，方便确认操作的是哪一块屏幕
+            if emulator.ensure_ready():
+                logger.ui(f"模拟器模式：当前设备 {emulator.serial}")
+            else:
+                logger.ui_error("模拟器模式：设备未就绪，请确认模拟器已启动")
+        elif config.user.interaction_mode.mode == InteractionMode.FRONTEND:
             if config.user.interaction_mode.frontend.force_window:
                 window_manager.set_foreground()
         else:
