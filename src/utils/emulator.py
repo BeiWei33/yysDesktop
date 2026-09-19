@@ -221,7 +221,10 @@ class Emulator:
             logger.ui_error("模拟器模式：没有找到可用的模拟器设备")
             return False
 
-        if want_serial and want_serial in candidates:
+        if self.serial and self.serial in candidates:
+            # 会话里已经指定过设备（例如在窗口管理里选了某一块屏幕），优先沿用
+            chosen = self.serial
+        elif want_serial and want_serial in candidates:
             chosen = want_serial
         else:
             # 没指定就优先选阴阳师在前台的设备

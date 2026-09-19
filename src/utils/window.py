@@ -300,9 +300,12 @@ class GameWindowManager:
             # 模拟器模式没有游戏窗口：画面与操作都走 adb，不搜索窗口也不报错
             self.handles = []
             self.current = None
-            if not self._initialized and hasattr(self, "gui_button_callback"):
+            if not getattr(self, "_emulator_listed", False):
+                # 设备列表只枚举一次（每次都要跑 adb，不适合放在定时任务里）
+                self._emulator_listed = True
                 self._initialized = True
-                self.gui_button_callback()
+                if hasattr(self, "gui_button_callback"):
+                    self.gui_button_callback()
             self._emit_window_update()
             return
 

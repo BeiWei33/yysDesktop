@@ -643,6 +643,10 @@ class MainWindow(FluentWindow):
         """
         combobox = self.windowManagerInterface.comboBox
         combobox.clear()
+        if emulator.enabled:
+            # 模拟器模式没有游戏窗口，改成列出模拟器设备：选中哪个就预览哪个
+            self._refresh_emulator_list()
+            return
         if game_window_list:
             for item in game_window_list:
                 combobox.addItem(f"{item.title} - {item.handle}", userData=item.handle)  # 存储窗口句柄
@@ -655,6 +659,43 @@ class MainWindow(FluentWindow):
         self.windowManagerInterface.comboBox.setEnabled(len(game_window_list) > 0)
         self.windowManagerInterface.preview_button.setEnabled(len(game_window_list) > 0)
         self.windowManagerInterface.apply_button.setEnabled(len(game_window_list) > 0)
+
+    def _refresh_emulator_list(self):
+        """把检测到的模拟器设备填进窗口管理列表
+
+        多开时靠这里区分"程序正在操作哪一块屏幕"：标签带序号、分辨率和当前标记。
+        """
+        widget = self.windowManagerInterface
+        combobox = widget.comboBox
+        combobox.clear()
+
+        try:
+            devices = emulator.list_devices()
+        except Exception as error:  # noqa: BLE001
+            logger.ui_error(f"枚举模拟器设备失败：{error}")
+            devices = []
+
+        current = emulator.serial or config.user.emulator.device_serial or ""
+        for index, device in enumerate(devices, start=1):
+            label = f"模拟器 #{index}  {device['serial']}"
+            if device["resolution"]:
+                label += f"  {device['resolution']}"
+            if device["is_game"]:
+                label += "  · 阴阳师运行中"
+            if device["serial"] == current:
+                label += "  ← 当前"
+            combobox.addItem(label, userData=device["serial"])
+
+        if devices:
+            index = combobox.findData(current)
+            combobox.setCurrentIndex(index if index >= 0 else 0)
+            logger.info(f"刷新模拟器列表，设备数量：{len(devices)}")
+        else:
+            logger.info("刷新模拟器列表，设备数量：0")
+
+        widget.comboBox.setEnabled(bool(devices))
+        widget.preview_button.setEnabled(bool(devices))
+        widget.apply_button.setEnabled(bool(devices))
 
     def _update_screen_resolution_handle(self):
         """更新屏幕分辨率显示"""
@@ -669,6 +710,39 @@ class MainWindow(FluentWindow):
         """预览选中的窗口"""
         widget = self.windowManagerInterface
         data = widget.comboBox.currentData()
+        if emulator.enabled:
+            # 模拟器模式：预览选中设备的画面，方便确认操作的是哪一块屏幕
+            if not data:
+                logger.warning("未选中模拟器设备")
+                ms.main.qmessagbox_update.emit("ERROR", "未选中模拟器设备")
+                return
+            serial = str(data)
+            backup_serial = emulator.serial
+            try:
+                emulator.serial = serial
+                emulator.width = emulator.height = 0
+                image = emulator.screenshot()
+            except Exception as error:  # noqa: BLE001
+                emulator.serial = backup_serial
+                logger.ui_error(f"预览失败：{error}")
+                return
+            finally:
+                emulator.serial = backup_serial
+                emulator.width = emulator.height = 0
+
+            pixmap = QPixmap.fromImage(ImageQt(image))
+            scaled_pixmap = pixmap.scaled(
+                widget.preview_image.width(),
+                widget.preview_image.height(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            widget.preview_image.setPixmap(scaled_pixmap)
+            widget.update_capture_size_label(f"模拟器 {serial}")
+            widget.update_capture_time_label(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}")
+            logger.info(f"预览模拟器：{serial}")
+            return
+
         if data and int(data):
             handle = int(data)
             logger.info(f"当前窗口：{handle}")
@@ -703,6 +777,20 @@ class MainWindow(FluentWindow):
         """应用选中的窗口"""
         widget = self.windowManagerInterface
         data = widget.comboBox.currentData()
+        if emulator.enabled:
+            # 模拟器模式：把选中的设备设为当前操作对象
+            if not data:
+                logger.warning("未选中模拟器设备")
+                ms.main.qmessagbox_update.emit("ERROR", "未选中模拟器设备")
+                return
+            serial = str(data)
+            config.update("emulator.device_serial", serial)
+            emulator.serial = serial
+            emulator.width = emulator.height = 0
+            logger.ui(f"已切换到模拟器设备：{serial}")
+            self._refresh_emulator_list()
+            return
+
         if data and int(data):
             handle = int(data)
             window_manager.force_update(handle)
