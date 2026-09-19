@@ -117,6 +117,44 @@ class Emulator:
                 devices.append(parts[0])
         return devices
 
+    def _eligible_devices(self) -> list[str]:
+        """可用于选择的设备列表
+
+        MuMu 会把同一台设备同时暴露成 ``127.0.0.1:端口`` 和 ``emulator-XXXX`` 两种别名，
+        两种都列出来会让多开时的选择产生歧义，所以有 TCP 形式时忽略 emulator 形式。
+        """
+        serials = self._devices()
+        tcp_serials = [serial for serial in serials if ":" in serial]
+        return tcp_serials or serials
+
+    def connect_ports(self) -> list[str]:
+        """连接 MuMu 各开号端口，返回新连上的设备"""
+        connected = []
+        for port in DEVICE_PORTS:
+            target = f"127.0.0.1:{port}"
+            result = self._adb("connect", target)
+            if b"connected" in result.stdout:
+                connected.append(target)
+        return connected
+
+    def _device_size(self, serial: str) -> str:
+        """设备画面尺寸（按横屏展示，仅用于选择列表显示）"""
+        text = self._adb("-s", serial, "shell", "wm", "size").stdout.decode("utf-8", errors="replace")
+        for token in text.replace(":", " ").split():
+            if "x" in token and token[0].isdigit():
+                width, _, height = token.partition("x")
+                if width.isdigit() and height.isdigit():
+                    long_side = max(int(width), int(height))
+                    short_side = min(int(width), int(height))
+                    return f"{long_side}x{short_side}"
+                return token
+        return ""
+
+    def _is_game_package(self, package: str) -> bool:
+        """判断当前前台应用是不是阴阳师"""
+        prefix = _config_value("package_name", "") or DEFAULT_PACKAGE
+        return bool(package) and package.startswith(prefix.split("_")[0][:16])
+
     def _focused_package(self, serial: str) -> str:
         result = self._adb("-s", serial, "shell", "dumpsys", "window")
         text = result.stdout.decode("utf-8", errors="replace")
@@ -128,12 +166,42 @@ class Emulator:
                     return parts[-1].split("/")[0]
         return ""
 
+    def list_devices(self, connect_ports: bool = True) -> list[dict]:
+        """列出可用的模拟器设备（多开时用于选择）
+
+        Args:
+            connect_ports (bool): 是否先尝试连接 MuMu 的各开号端口
+
+        Returns:
+            list[dict]: 每项包含 serial、resolution、package、is_game
+        """
+        if not self.enabled:
+            return []
+        if self.adb_path is None:
+            self.adb_path = self.find_adb()
+        if self.adb_path is None:
+            return []
+
+        if connect_ports:
+            self.connect_ports()
+
+        devices = []
+        for serial in self._eligible_devices():
+            package = self._focused_package(serial)
+            devices.append(
+                {
+                    "serial": serial,
+                    "resolution": self._device_size(serial),
+                    "package": package,
+                    "is_game": self._is_game_package(package),
+                }
+            )
+        return devices
+
     def ensure_ready(self) -> bool:
         """准备 adb 与设备连接，返回是否可用"""
         if not self.enabled:
             return False
-
-        prefix = _config_value("package_name", "") or DEFAULT_PACKAGE
 
         if self.adb_path is None:
             self.adb_path = self.find_adb()
@@ -145,38 +213,27 @@ class Emulator:
         if want_serial and want_serial not in self._devices():
             self._adb("connect", want_serial)
 
-        serials = self._devices()
-        if want_serial and want_serial in serials:
-            candidates = [want_serial]
-        else:
-            candidates = serials
+        # 多开时把各开号端口都连上，否则只能看到已经连过的那个
+        self.connect_ports()
 
-        if not candidates:
-            for port in DEVICE_PORTS:
-                target = f"127.0.0.1:{port}"
-                result = self._adb("connect", target)
-                if b"connected" in result.stdout:
-                    candidates.append(target)
-                    break
-            candidates = candidates or self._devices()
-
+        candidates = self._eligible_devices()
         if not candidates:
             logger.ui_error("模拟器模式：没有找到可用的模拟器设备")
             return False
 
-        # 优先选择阴阳师在前台的设备
-        chosen = ""
-        for serial in candidates:
-            if prefix and prefix.split(".")[-1][:6] in self._focused_package(serial):
-                chosen = serial
-                break
-        if not chosen:
-            for serial in candidates:
-                package = self._focused_package(serial)
-                if prefix and package.startswith(prefix.split("_")[0][:16]):
-                    chosen = serial
-                    break
-        chosen = chosen or candidates[0]
+        if want_serial and want_serial in candidates:
+            chosen = want_serial
+        else:
+            # 没指定就优先选阴阳师在前台的设备
+            game_devices = [
+                serial for serial in candidates if self._is_game_package(self._focused_package(serial))
+            ]
+            if len(game_devices) > 1:
+                logger.ui_warn(
+                    f"模拟器模式：多个模拟器都在运行游戏 {game_devices}，已选择 {game_devices[0]}，"
+                    "可在设置→模拟器设备里指定"
+                )
+            chosen = (game_devices or candidates)[0]
 
         if chosen != self.serial:
             self.serial = chosen

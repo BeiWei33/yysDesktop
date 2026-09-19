@@ -349,6 +349,63 @@ class SettingTansuoChapterCard(AppCard):
             config.update("tansuo_target_chapter", index)
 
 
+class SettingEmulatorDeviceCard(AppCard):
+    """设置项-模拟器设备（多开时选择要操作的那一个）"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.APPLICATION,
+            "模拟器设备",
+            "多开时选择要操作的那个模拟器；「自动」会优先使用正在运行阴阳师的设备",
+            parent,
+        )
+
+        self._loading = False
+        self._loaded = False
+        self.combobox = ComboBox()
+        self.combobox.setFixedWidth(260)
+        self.combobox.currentIndexChanged.connect(self._config_update)
+
+        self.refresh_button = PushButton("刷新")
+        self.refresh_button.clicked.connect(self.reload_devices)
+
+        self.hBoxLayout.addWidget(self.combobox)
+        self.hBoxLayout.addWidget(self.refresh_button)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._loaded:
+            self._loaded = True
+            self.reload_devices()
+
+    def reload_devices(self):
+        """重新枚举模拟器设备（会执行 adb 命令，略微耗时）"""
+        self._loading = True
+        try:
+            self.combobox.clear()
+            self.combobox.addItem("自动", userData="")
+            for device in emulator.list_devices():
+                label = device["serial"]
+                if device["resolution"]:
+                    label += f"  {device['resolution']}"
+                if device["is_game"]:
+                    label += "  · 阴阳师运行中"
+                self.combobox.addItem(label, userData=device["serial"])
+
+            current = config.user.emulator.device_serial or ""
+            index = self.combobox.findData(current)
+            self.combobox.setCurrentIndex(index if index >= 0 else 0)
+        finally:
+            self._loading = False
+
+    def _config_update(self):
+        if self._loading:
+            return
+        serial = self.combobox.currentData() or ""
+        if serial != config.user.emulator.device_serial:
+            config.update("emulator.device_serial", serial)
+
+
 class SettingInputMotionCard(AppCard):
     """设置项-输入运动"""
 
@@ -635,6 +692,7 @@ class SettingWidget(QWidget):
         self.xuanshangfengyin_card = SettingXuanshangfengyinCard()
         self.battle_theme_card = SettingBattleThemeCard()
         self.tansuo_chapter_card = SettingTansuoChapterCard()
+        self.emulator_device_card = SettingEmulatorDeviceCard()
         self.input_motion_card = SettingInputMotionCard()
         self.remember_force_zoom_card = SettingRememberForceZoomCard()
         self.force_zoom_accepted_card = SettingForceZoomAcceptedCard()
@@ -659,6 +717,7 @@ class SettingWidget(QWidget):
         self._layout.addWidget(self.xuanshangfengyin_card)
         self._layout.addWidget(self.battle_theme_card)
         self._layout.addWidget(self.tansuo_chapter_card)
+        self._layout.addWidget(self.emulator_device_card)
         self._layout.addWidget(self.input_motion_card)
         self._layout.addWidget(self.remember_force_zoom_card)
         self._layout.addWidget(self.force_zoom_accepted_card)

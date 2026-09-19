@@ -55,3 +55,35 @@ def test_emulator_scale_uses_capture_size(monkeypatch):
     emulator.width, emulator.height = 1920, 1080
 
     assert emulator.scale() == (1920 / 1136, 1080 / 640)
+
+
+def test_eligible_devices_prefers_tcp_alias(monkeypatch):
+    """MuMu 同一台设备会同时是 127.0.0.1:端口 和 emulator-XXXX，不能重复列出。"""
+    emulator = Emulator()
+    monkeypatch.setattr(
+        emulator,
+        "_devices",
+        lambda: ["127.0.0.1:16416", "127.0.0.1:16448", "emulator-5556", "emulator-5558"],
+    )
+
+    assert emulator._eligible_devices() == ["127.0.0.1:16416", "127.0.0.1:16448"]
+
+
+def test_eligible_devices_keeps_emulator_alias_without_tcp(monkeypatch):
+    emulator = Emulator()
+    monkeypatch.setattr(emulator, "_devices", lambda: ["emulator-5556"])
+
+    assert emulator._eligible_devices() == ["emulator-5556"]
+
+
+def test_device_size_is_shown_landscape(monkeypatch):
+    """wm size 报的是竖屏自然方向 720x1280，展示时按横屏 1280x720。"""
+    emulator = Emulator()
+    monkeypatch.setattr(emulator, "adb_path", "adb")
+    monkeypatch.setattr(
+        emulator,
+        "_adb",
+        lambda *args, **kwargs: SimpleNamespace(stdout=b"Physical size: 720x1280\n"),
+    )
+
+    assert emulator._device_size("127.0.0.1:16416") == "1280x720"
