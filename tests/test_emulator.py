@@ -76,6 +76,26 @@ def test_eligible_devices_keeps_emulator_alias_without_tcp(monkeypatch):
     assert emulator._eligible_devices() == ["emulator-5556"]
 
 
+def test_ensure_ready_reuses_resolved_device(monkeypatch):
+    """设备解析过一次就复用：否则每次截图都要跑 6~8 个 adb 命令，慢好几倍。"""
+    import src.utils.emulator as emulator_module
+
+    monkeypatch.setattr(emulator_module.config.user.emulator, "enabled", True, raising=False)
+    emulator = Emulator()
+    emulator.adb_path = "adb"
+    emulator.serial = "127.0.0.1:16416"
+
+    calls = []
+    monkeypatch.setattr(emulator, "_devices", lambda: calls.append("devices") or [])
+    monkeypatch.setattr(emulator, "connect_ports", lambda: calls.append("connect"))
+
+    assert emulator.ensure_ready() is True
+    assert calls == []
+
+    emulator.ensure_ready(force=True)
+    assert "devices" in calls
+
+
 def test_device_size_is_shown_landscape(monkeypatch):
     """wm size 报的是竖屏自然方向 720x1280，展示时按横屏 1280x720。"""
     emulator = Emulator()

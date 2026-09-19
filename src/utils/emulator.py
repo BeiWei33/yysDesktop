@@ -187,7 +187,7 @@ class Emulator:
             list[dict]: 每项包含 serial、resolution、package、is_game
         """
         if not self.enabled:
-            logger.warning("枚举模拟器设备：模拟器模式未开启")
+            logger.ui_error("枚举模拟器设备：模拟器模式未开启，请先在设置里打开开关")
             return []
         if self.adb_path is None:
             self.adb_path = self.find_adb()
@@ -226,10 +226,19 @@ class Emulator:
             )
         return devices
 
-    def ensure_ready(self) -> bool:
-        """准备 adb 与设备连接，返回是否可用"""
+    def ensure_ready(self, force: bool = False) -> bool:
+        """准备 adb 与设备连接，返回是否可用
+
+        Args:
+            force (bool): 强制重新解析设备。默认情况下设备已经解析过就直接复用——
+                设备发现要跑 6~8 个 adb 命令（adb devices、5 个端口 connect、dumpsys），
+                每次截图都重跑会让模拟器模式慢上好几倍。
+        """
         if not self.enabled:
             return False
+
+        if not force and self.serial and self.adb_path is not None:
+            return True
 
         if self.adb_path is None:
             self.adb_path = self.find_adb()
@@ -280,7 +289,14 @@ class Emulator:
         if not self.ensure_ready():
             raise EmulatorError("模拟器不可用")
 
-        result = self._adb("-s", self.serial, "exec-out", "screencap", "-p", timeout=30)
+        try:
+            result = self._adb("-s", self.serial, "exec-out", "screencap", "-p", timeout=30)
+        except Exception:
+            # 设备可能掉线或换了，强制重新解析一次再放弃
+            self.serial = None
+            if not self.ensure_ready(force=True):
+                raise
+            result = self._adb("-s", self.serial, "exec-out", "screencap", "-p", timeout=30)
         raw = result.stdout
         if not raw:
             raise EmulatorError("模拟器截图返回空数据")
