@@ -29,6 +29,7 @@ from ..utils.application import (
     QQ_GROUP_LINK,
 )
 from ..utils.config import DEFAULT_LOG_COLORS, InteractionMode, LogColorLevel, config, default_config
+from ..utils.emulator import emulator
 from ..utils.log import logger
 from .game_function_selector_widget import GameFunctionSelectorWidget
 
