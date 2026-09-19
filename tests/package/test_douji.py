@@ -56,6 +56,12 @@ def _make_runner(monkeypatch, ready_asset: str | None = None, ready_clicks: list
     monkeypatch.setattr(base_package_module, "RuleImage", FakeRuleImage)
     monkeypatch.setattr(base_package_module, "Mouse", SimpleNamespace(click=clicks.append))
     monkeypatch.setattr(base_package_module, "sleep", lambda *args, **kwargs: None)
+    # click_ready_once 现在只截一帧、同时匹配新旧两种准备素材
+    monkeypatch.setattr(
+        base_package_module,
+        "ScreenShot",
+        lambda *args, **kwargs: SimpleNamespace(rect=None, get_image=lambda: object()),
+    )
     return runner, clicks
 
 
