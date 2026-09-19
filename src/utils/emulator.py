@@ -1,4 +1,4 @@
-"""安卓模拟器（MuMu）支持
+﻿"""安卓模拟器（MuMu）支持
 
 阴阳师手机版在模拟器里无法沿用桌面版的方式：
 
@@ -10,6 +10,7 @@
 """
 
 import io
+import struct
 import os
 import shutil
 import subprocess
@@ -284,24 +285,41 @@ class Emulator:
         # 横屏游戏的截图尺寸与之不同，用它会算错点击坐标。
         return self.serial is not None
 
+    def _capture_raw(self) -> Image.Image:
+        """用 raw 方式截图
+
+        screencap 不加 -p 时设备端不做 PNG 编码、客户端也不用解码，实测比 PNG 快 2 倍左右
+        （本地 adb 带宽足够）。raw 头部自带宽高，比 wm size 更可靠。
+        """
+        raw = self._adb("-s", self.serial, "exec-out", "screencap", timeout=30).stdout
+        if len(raw) < 12:
+            raise EmulatorError("模拟器截图返回空数据")
+
+        width, height, _pixel_format = struct.unpack("<III", raw[:12])
+        expected = width * height * 4
+        offset = 12
+        if len(raw) - offset < expected:
+            # 少数机型头部多一个 colorspace 字段（16 字节）
+            offset = 16
+        if len(raw) - offset < expected:
+            raise EmulatorError(f"模拟器截图数据不完整：{len(raw)} 字节，期望 {expected + offset}")
+
+        return Image.frombuffer("RGBA", (width, height), raw[offset:], "raw", "RGBA", 0, 1).convert("RGB")
+
     def screenshot(self) -> Image.Image:
         """截取模拟器画面并归一化到 1136×640"""
         if not self.ensure_ready():
             raise EmulatorError("模拟器不可用")
 
         try:
-            result = self._adb("-s", self.serial, "exec-out", "screencap", "-p", timeout=30)
+            image = self._capture_raw()
         except Exception:
             # 设备可能掉线或换了，强制重新解析一次再放弃
             self.serial = None
             if not self.ensure_ready(force=True):
                 raise
-            result = self._adb("-s", self.serial, "exec-out", "screencap", "-p", timeout=30)
-        raw = result.stdout
-        if not raw:
-            raise EmulatorError("模拟器截图返回空数据")
+            image = self._capture_raw()
 
-        image = Image.open(io.BytesIO(raw)).convert("RGB")
         # 以实际截图尺寸为准：wm size 报的是设备自然方向（可能是竖屏），
         # 横屏游戏的截图是 1920×1080，用错会让点击坐标整体偏移。
         self.width, self.height = image.size
