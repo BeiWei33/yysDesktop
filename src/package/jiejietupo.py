@@ -8,6 +8,7 @@ from PIL import Image
 from ..utils.adapter import KeyBoard, Mouse
 from ..utils.decorator import log_function_call
 from ..utils.event import event_thread
+from ..utils.emulator import emulator
 from ..utils.exception import CustomException, GUIStopException
 from ..utils.function import finish_random_left_right, random_point, sleep
 from ..utils.image import RuleImage
@@ -159,11 +160,37 @@ class JieJieTuPo(BasePackage):
         # 三次都没有点到结界
         raise JieJieTuPoTargetUnavailable("未点到结界")
 
+    def confirm_exit_dialog(self, timeout: float = 6) -> bool:
+        """点掉退出确认弹窗
+
+        桌面版按 ESC+ENTER 就能退出战斗，但模拟器模式下这两个键被映射成安卓的
+        返回键/回车键，返回键能弹出确认框、回车键却点不掉它（确认按钮是触摸按钮），
+        所以这里按文字识别找到「确定/确认」再点。
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if bool(event_thread):
+                raise GUIStopException
+
+            for item in RuleOcr().get_raw_result():
+                # 精确匹配按钮文案：弹窗标题「确定退出当前战斗？」也含"确定"，
+                # 用包含匹配会点到标题上
+                if item.text.strip() in ("确定", "确认", "確定", "確認"):
+                    logger.ui("点击退出确认")
+                    Mouse.click(item.center)
+                    return True
+            sleep(0.6, 1.0)
+        logger.ui_warn("没找到退出确认按钮，请手动处理")
+        return False
+
     def fighting_proactive_failure_once(self):
         """主动失败一次"""
         KeyBoard.esc()
         sleep()
-        KeyBoard.enter()
+        if emulator.enabled:
+            self.confirm_exit_dialog()
+        else:
+            KeyBoard.enter()
         logger.ui("手动退出")
 
 
