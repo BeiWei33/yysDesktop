@@ -546,7 +546,10 @@ class JieJieTuPoGeRen(JieJieTuPo):
         raise JieJieTuPoReadyTimeout("未返回个人突破页面，已停止结界突破任务")
 
     def wait_for_ready(self, max_attempts: int = 30) -> bool:
-        """有限等待准备界面，并在同一帧兼容新旧准备按钮。"""
+        """有限等待准备界面，并在同一帧兼容新旧准备按钮。
+
+        图像素材在手机版上不一定命中（渲染有差异），所以再加一层「准备」文字识别兜底。
+        """
         for _ in range(max_attempts):
             if bool(event_thread):
                 raise GUIStopException
@@ -556,6 +559,10 @@ class JieJieTuPoGeRen(JieJieTuPo):
                 return True
             if RuleImage(self.global_assets.IMAGE_READY_OLD).match(screenshot):
                 return True
+            # 文字兜底：手机版的准备按钮常常只有文字能对上
+            for item in RuleOcr().get_raw_result():
+                if item.text.strip() in ("准备", "準備"):
+                    return True
             sleep(0.4, 0.8)
 
         return False
@@ -598,7 +605,10 @@ class JieJieTuPoGeRen(JieJieTuPo):
 
             self.check_click(self.IMAGE_FIGHT_AGAIN, timeout=5)
             sleep()
-            KeyBoard.enter()
+            if not emulator.enabled:
+                # 桌面版靠回车进入下一场；模拟器模式下点「再次挑战」后游戏自己会
+                # 走到准备界面，安卓回车键在这里没有作用
+                KeyBoard.enter()
 
         sleep(2)
         if not self.check_scene(self.IMAGE_FANGSHOUJILU, timeout=15):
