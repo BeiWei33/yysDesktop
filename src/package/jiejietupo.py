@@ -559,10 +559,11 @@ class JieJieTuPoGeRen(JieJieTuPo):
                 return True
             if RuleImage(self.global_assets.IMAGE_READY_OLD).match(screenshot):
                 return True
-            # 文字兜底：手机版的准备按钮常常只有文字能对上
-            for item in RuleOcr().get_raw_result():
-                if item.text.strip() in ("准备", "準備"):
-                    return True
+            # 文字兜底：手机版的准备按钮常常只有文字能对上（桌面版不需要，避免多余的 OCR 开销）
+            if emulator.enabled:
+                for item in RuleOcr().get_raw_result():
+                    if item.text.strip() in ("准备", "準備"):
+                        return True
             sleep(0.4, 0.8)
 
         return False

@@ -10,6 +10,10 @@ def _runner(monkeypatch, ocr_texts: list[str], emulator_enabled: bool):
     runner = object.__new__(JieJieTuPoGeRen)
     keys: list[str] = []
     clicks: list = []
+    runner.global_assets = SimpleNamespace(
+        IMAGE_READY_NEW=SimpleNamespace(name="ready_new"),
+        IMAGE_READY_OLD=SimpleNamespace(name="ready_old"),
+    )
 
     monkeypatch.setattr(
         jiejietupo_module, "ScreenShot", lambda *a, **k: SimpleNamespace(rect=None)
