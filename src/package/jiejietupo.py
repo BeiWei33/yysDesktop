@@ -160,12 +160,13 @@ class JieJieTuPo(BasePackage):
         # 三次都没有点到结界
         raise JieJieTuPoTargetUnavailable("未点到结界")
 
-    def confirm_exit_dialog(self, timeout: float = 6) -> bool:
-        """点掉退出确认弹窗
+    def tap_confirm_button(self, reason: str = "确认弹窗", timeout: float = 6) -> bool:
+        """点掉由返回键/点击唤起的确认弹窗
 
-        桌面版按 ESC+ENTER 就能退出战斗，但模拟器模式下这两个键被映射成安卓的
-        返回键/回车键，返回键能弹出确认框、回车键却点不掉它（确认按钮是触摸按钮），
-        所以这里按文字识别找到「确定/确认」再点。
+        桌面版靠键盘推进的步骤，在模拟器上常常是一个触摸确认框，需要识别文字再点：
+        - 退出战斗：「确认退出战斗吗？」→ 确定/确认
+        - 再次挑战：「是否再次挑战？」→ 确定/确认
+        精确匹配按钮文案，避免点到同样含"确定"的弹窗标题上。
         """
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -173,15 +174,17 @@ class JieJieTuPo(BasePackage):
                 raise GUIStopException
 
             for item in RuleOcr().get_raw_result():
-                # 精确匹配按钮文案：弹窗标题「确定退出当前战斗？」也含"确定"，
-                # 用包含匹配会点到标题上
                 if item.text.strip() in ("确定", "确认", "確定", "確認"):
-                    logger.ui("点击退出确认")
+                    logger.ui(f"点击{reason}的确定按钮")
                     Mouse.click(item.center)
                     return True
             sleep(0.6, 1.0)
-        logger.ui_warn("没找到退出确认按钮，请手动处理")
+        logger.ui_warn(f"没找到{reason}的确定按钮，请手动处理")
         return False
+
+    def confirm_exit_dialog(self, timeout: float = 6) -> bool:
+        """点掉退出确认弹窗（保留旧名字，便于既有调用与测试）"""
+        return self.tap_confirm_button("退出确认", timeout)
 
     def fighting_proactive_failure_once(self):
         """主动失败一次"""
@@ -602,9 +605,15 @@ class JieJieTuPoGeRen(JieJieTuPo):
             if count >= count_max:
                 if self.check_scene(self.IMAGE_FIGHT_AGAIN):
                     finish_random_left_right()
+                    if emulator.enabled:
+                        # 可能弹出「是否再次挑战？」，点掉它
+                        self.tap_confirm_button("再次挑战")
                 break
 
             self.check_click(self.IMAGE_FIGHT_AGAIN, timeout=5)
+            if emulator.enabled:
+                # 点「再次挑战」后游戏会弹出「是否再次挑战？」确认框，需要再点确定
+                self.tap_confirm_button("再次挑战")
             sleep()
             if not emulator.enabled:
                 # 桌面版靠回车进入下一场；模拟器模式下点「再次挑战」后游戏自己会
