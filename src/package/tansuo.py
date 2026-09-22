@@ -8,6 +8,7 @@ from ..utils.image import RuleImage, check_image_once
 from ..utils.log import logger
 from ..utils.paddleocr import RuleOcr
 from ..utils.point import Point
+from ..utils.screenshot import ScreenShot
 from ..utils.viewport import CANONICAL_SIZE
 from .base_package import BasePackage
 
@@ -490,24 +491,26 @@ class TanSuo(BasePackage):
             if bool(event_thread):
                 raise GUIStopException
 
+            # 一次截图复用给本轮三个判断：中间没有点击，帧不会变（战斗轮询很密集，
+            # 每次少截两帧，模拟器模式下每轮大约省 0.7 秒）
+            screenshot = ScreenShot()
             # 如果匹配到小怪的按钮，返回上一级
-            if not flag_done and RuleImage(self.IMAGE_FIGHT_LITTLE_MONSTER).match():
+            if not flag_done and RuleImage(self.IMAGE_FIGHT_LITTLE_MONSTER).match(screenshot):
                 logger.ui_warn("未进入战斗，重新匹配")
                 return
             # 如果匹配到临时弹窗，点击关闭
-            if self.has_temp_pop and RuleImage(self.global_assets.IMAGE_TEMP_POP).match():
+            if self.has_temp_pop and RuleImage(self.global_assets.IMAGE_TEMP_POP).match(screenshot):
                 finish_random_left_right()
                 logger.ui("关闭临时弹窗")
                 sleep(2)
                 continue
 
-            _result = check_image_once(
-                [
-                    # self.global_image.IMAGE_VICTORY,
-                    self.global_assets.IMAGE_FINISH,
-                    *self.global_assets.ALL_FAIL_IMAGES,
-                ]
-            )
+            _result = None
+            for asset in (self.global_assets.IMAGE_FINISH, *self.global_assets.ALL_FAIL_IMAGES):
+                rule = RuleImage(asset)
+                if rule.match(screenshot):
+                    _result = rule
+                    break
             if _result:
                 flag_done = True
                 logger.ui_warn(f"战斗结束{('（' + _result.description + '）') if _result.description else ''}")
