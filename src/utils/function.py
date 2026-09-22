@@ -91,6 +91,42 @@ def random_sleep(
 sleep = random_sleep
 
 
+def wait_until(predicate, timeout: float = 3.0, interval: float = 0.3, caller_name: str = "") -> bool:
+    """轮询等待条件成立
+
+    用来替代"固定睡眠 N 秒再判断"：条件一成立就立刻返回，最多等到 timeout 秒
+    （上限与改造前的固定睡眠一致甚至更宽，只是提前结束等待）。
+
+    注意：每次判断都必须重新取状态（截图/OCR），不能把旧结果当缓存 ——
+    点击或滑动之后，之前的画面立即作废。
+
+    参数:
+        predicate (Callable[[], bool]): 条件函数，真值表示可以继续
+        timeout (float): 总等待上限，单位秒
+        interval (float): 轮询间隔，单位秒
+        caller_name (str): 日志里显示的调用方
+
+    返回:
+        bool: 条件是否成立（超时返回 False）
+    """
+    deadline = time.time() + timeout
+    while True:
+        if bool(event_thread):
+            raise GUIStopException
+
+        if predicate():
+            return True
+
+        if time.time() >= deadline:
+            return False
+
+        random_sleep(
+            caller_name=caller_name or "wait_until",
+            minimum=max(interval * 0.8, 0.05),
+            maximum=interval * 1.2,
+        )
+
+
 def distance_between_two_points(point1: Point, point2: Point):
     """计算两点之间的距离
 

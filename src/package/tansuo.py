@@ -3,7 +3,7 @@ from ..utils.config import config
 from ..utils.decorator import log_function_call
 from ..utils.event import event_thread
 from ..utils.exception import CustomException, DailyLimitException, GUIStopException
-from ..utils.function import finish_random_left_right, random_normal, random_num, sleep
+from ..utils.function import finish_random_left_right, random_normal, random_num, sleep, wait_until
 from ..utils.image import RuleImage, check_image_once
 from ..utils.log import logger
 from ..utils.paddleocr import RuleOcr
@@ -334,7 +334,9 @@ class TanSuo(BasePackage):
 
             logger.ui("点击左上角返回章节列表")
             Mouse.click(result.center_point())
-            sleep(2, 3)  # 等待返回动画
+            # 等待返回动画：轮询到章节列表出现就继续，最多等 3 秒
+            # （与原来的 sleep(2, 3) 上限一致，只是提前结束等待）
+            wait_until(self.chapter_list_visible, timeout=3.0, caller_name="back_to_chapter_list")
 
         return self.chapter_list_visible()
 
@@ -537,11 +539,19 @@ class TanSuo(BasePackage):
             if bool(event_thread):
                 raise GUIStopException
 
-            # 等待加载完毕
-            sleep(1.5, 2)
+            # 等待加载完毕：轮询到相关素材出现就继续（最多等 2.5 秒，与原来的 sleep(1.5, 2) 上限相当）。
+            # 这一帧之后没有点击，可以直接复用它做下面的判断。
+            screenshot = self.wait_frame(
+                [
+                    self.IMAGE_CHUZHANXIAOHAO,
+                    self.IMAGE_START,
+                    self.IMAGE_TREASURE_BOX,
+                ],
+                timeout=2.5,
+            )
 
             # 如果还在探索里，说明有掉落物，直接退出
-            if RuleImage(self.IMAGE_CHUZHANXIAOHAO).match():
+            if RuleImage(self.IMAGE_CHUZHANXIAOHAO).match(screenshot):
                 logger.ui("有掉落物，直接退出")
                 self.check_click(self.IMAGE_QUIT, timeout=3)
                 sleep(1)
@@ -551,10 +561,10 @@ class TanSuo(BasePackage):
             else:
                 image_start = RuleImage(self.IMAGE_START)
                 image_treasure_box = RuleImage(self.IMAGE_TREASURE_BOX)
-                if image_start.match():
+                if image_start.match(screenshot):
                     logger.ui("探索结束")
                 # 宝箱
-                elif image_treasure_box.match():
+                elif image_treasure_box.match(screenshot):
                     Mouse.click(image_treasure_box.center_point())
                     logger.info("获得宝箱")
                     Mouse.click(wait=2)
@@ -593,7 +603,13 @@ class TanSuo(BasePackage):
                         self.try_fix_chapter(force=True)
                         continue
                     Mouse.click(point)
-                    sleep(3)  # 等待行动动画
+                    # 等待行动动画：轮询到章节详情/探索入口出现就继续，最多等 3 秒
+                    # （与原来的 sleep(3) 上限一致）。这里只等"目标界面"，不等刚点过的
+                    # 章节列表按钮，避免动画还没结束就重复点击同一处。
+                    self.wait_frame(
+                        [self.IMAGE_START, self.IMAGE_CHUZHANXIAOHAO, *self.chapter_assets()],
+                        timeout=3.0,
+                    )
 
                 case self.IMAGE_TITLE_28.name | self.IMAGE_START.name:
                     logger.ui("准备进入探索")
@@ -603,7 +619,8 @@ class TanSuo(BasePackage):
                         logger.ui_warn("尝试进入探索失败3次")
                         self.start_click_count = 0  # 重置计数器
                         raise DailyLimitException("探索次数已达本日上限")
-                    sleep(2)
+                    # 等待进入探索：轮询到探索地图出现就继续，最多等 2 秒（原来固定 sleep(2)）
+                    self.wait_frame([self.IMAGE_CHUZHANXIAOHAO], timeout=2.0)
 
                 case self.IMAGE_CHUZHANXIAOHAO.name:
                     self.start_click_count = 0  # 成功进入探索，重置计数器

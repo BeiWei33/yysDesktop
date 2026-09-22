@@ -9,7 +9,7 @@ from ..utils.decorator import log_function_call, run_in_thread
 from ..utils.emulator import emulator
 from ..utils.event import event_thread
 from ..utils.exception import CustomException, GUIStopException
-from ..utils.function import finish_random_left_right, prevent_sleep, sleep
+from ..utils.function import finish_random_left_right, prevent_sleep, sleep, wait_until
 from ..utils.image import AssetImage, RuleImage
 from ..utils.log import logger
 from ..utils.mysignal import global_ms as ms
@@ -339,6 +339,46 @@ class BasePackage:
                 if rule.match(_screenshot):
                     logger.ui_warn(f"战斗失败（{rule.description}）")
                     return False
+
+    def wait_frame(
+        self,
+        assets: list,
+        timeout: float = 3.0,
+        interval: float = 0.3,
+    ) -> "ScreenShot":
+        """轮询截图直到任一素材出现，返回那一帧
+
+        用来替代"固定睡眠 N 秒再判断界面"：界面一出现就立刻继续，最多等到 timeout 秒
+        （上限与原来的固定睡眠一致，只是提前结束等待）。
+
+        截图复用规则：每次轮询都是**新抓的帧**，不跨时间复用；返回的帧在调用方
+        立即使用（判定→点击之间不再插入截图）是安全的。
+        属于"动作后会变"或"会动"的目标（例如探索小怪、结界突破的结界状态），
+        不要在动作之后拿这里返回的旧帧继续判断。
+
+        Args:
+            assets (list): 素材列表（AssetImage）
+            timeout (float): 总等待上限，单位秒
+            interval (float): 轮询间隔，单位秒
+
+        Returns:
+            ScreenShot: 命中素材时的帧；超时则返回最后一帧
+        """
+        screenshot = ScreenShot()
+        deadline = time.time() + timeout
+        while True:
+            if bool(event_thread):
+                raise GUIStopException
+
+            for asset in assets:
+                if RuleImage(asset).match(screenshot, logger_lever="NONE"):
+                    return screenshot
+
+            if time.time() >= deadline:
+                return screenshot
+
+            sleep(max(interval * 0.8, 0.05), interval * 1.2)
+            screenshot = ScreenShot()
 
     def click_ready_once(self) -> bool:
         """识别到准备按钮则点击一次
