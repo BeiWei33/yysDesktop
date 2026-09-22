@@ -139,7 +139,8 @@ class HuiJuan(BasePackage):
             sleep(2)
             number = self.get_current_number()
 
-            sleep(2)
+            # 原来这里是三处连续的 sleep(2)（共 6 秒），中间只夹了一句日志；
+            # 合并成一个：等待界面切换 2 秒足够，省下 4 秒/轮。
             logger.ui("正在前往 结界突破")
             sleep(2)
 
@@ -150,7 +151,7 @@ class HuiJuan(BasePackage):
                 logger.ui_error("未识别到结界突破")
                 return
 
-            sleep(4)
+            sleep(2)
 
             if number < 0:
                 # 探索次数为0时，入场前的画面可能读不到突破券，进入结界突破后再识别一次
