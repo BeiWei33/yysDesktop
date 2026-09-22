@@ -56,6 +56,13 @@
             "file": "treasure_box.png",
             "region": [0, 0, 0, 0],
             "score": "0.7"
+        },
+        {
+            "name": "yard_tansuo",
+            "file": "yard_tansuo.png",
+            "description": "庭院-探索入口（灯笼文字）",
+            "region": [0, 0, 0, 0],
+            "score": "0.7"
         }
     ]
 }

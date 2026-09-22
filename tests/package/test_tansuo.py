@@ -73,6 +73,7 @@ def _make_runner(
     back_visible: bool = False,
     list_tail: int | None = None,
     list_base_y: int = 200,
+    yard_visible: bool = False,
 ):
     """按章节列表滑动次数模拟28章何时出现。
 
@@ -85,13 +86,17 @@ def _make_runner(
         click_polls: 点击28章后还要等几次检查才出现标题
         back_visible: 详情页左上角是否能识别到返回按钮
         list_tail: 列表只显示这一章（用于模拟最后一行被截断识别）
+        yard_visible: 当前是否停在庭院（能识别到庭院探索入口）
     """
     runner = object.__new__(ProductionTanSuo)
     runner.IMAGE_TITLE_28 = object()
     runner.IMAGE_TANSUO_28 = object()
     runner.IMAGE_QUIT = object()
+    runner.IMAGE_YARD_TANSUO = object()
     runner.chapter_miss_count = 0
     runner.chapter_fix_failures = 0
+    runner.chapter_unknown_count = 0
+    runner.yard_click_count = 0
 
     state = {
         "scrolled": 0,
@@ -113,9 +118,13 @@ def _make_runner(
                 return state["scrolled"] >= ready_after
             if self.asset is runner.IMAGE_QUIT:
                 return back_visible and state["in_detail"]
+            if self.asset is runner.IMAGE_YARD_TANSUO:
+                return yard_visible
             return False
 
         def center_point(self):
+            if self.asset is runner.IMAGE_YARD_TANSUO:
+                return "yard"
             return "back"
 
     def move(point=None, **kwargs):
@@ -133,6 +142,8 @@ def _make_runner(
         events.append(("click", point))
         if point == "back":
             state["in_detail"] = False
+        elif point == "yard":
+            state["yard_clicks"] = state.get("yard_clicks", 0) + 1
         else:
             state["entry_clicks"] += 1
 
@@ -396,6 +407,7 @@ def test_try_fix_chapter_waits_before_first_attempt(monkeypatch):
 
 
 def test_try_fix_chapter_does_not_count_absence_from_screen(monkeypatch):
+    """界面认不出来时不计入「切换章节失败」，但会计入空转保护计数。"""
     runner, _, _ = _make_runner(monkeypatch, ready_after=1, list_visible=False)
     runner.chapter_fix_interval = 1
 
@@ -403,6 +415,55 @@ def test_try_fix_chapter_does_not_count_absence_from_screen(monkeypatch):
         runner.try_fix_chapter()
 
     assert runner.chapter_fix_failures == 0
+    assert runner.chapter_unknown_count == ProductionTanSuo.chapter_fix_max_failures
+
+
+def test_try_fix_chapter_stops_when_screen_never_recognized(monkeypatch):
+    """连续多次认不出界面就报错停止，不再无限空转（曾经空转 6 分钟）。"""
+    runner, _, _ = _make_runner(monkeypatch, ready_after=1, list_visible=False)
+    runner.chapter_fix_interval = 1
+
+    with pytest.raises(TanSuoChapterUnavailable):
+        for _ in range(ProductionTanSuo.chapter_unknown_limit):
+            runner.try_fix_chapter()
+
+
+def test_try_fix_chapter_clicks_yard_exploration_entry(monkeypatch):
+    """停在庭院时应点探索入口，而不是继续空转。"""
+    runner, state, events = _make_runner(
+        monkeypatch, ready_after=1, list_visible=False, yard_visible=True
+    )
+    runner.chapter_fix_interval = 1
+
+    runner.try_fix_chapter()
+
+    assert state["yard_clicks"] == 1
+    assert runner.chapter_unknown_count == 0  # 点了入口就不算空转
+
+
+def test_try_fix_chapter_stops_when_yard_entry_useless(monkeypatch):
+    """点了探索入口仍停在庭院（连点超过上限）也要报错停止。"""
+    runner, _, _ = _make_runner(
+        monkeypatch, ready_after=1, list_visible=False, yard_visible=True
+    )
+    runner.chapter_fix_interval = 1
+
+    with pytest.raises(TanSuoChapterUnavailable):
+        for _ in range(ProductionTanSuo.yard_click_limit + 1):
+            runner.try_fix_chapter()
+
+
+def test_yard_click_counter_resets_after_recovery(monkeypatch):
+    """恢复到正常界面后，庭院点击计数要清零。"""
+    runner, _, _ = _make_runner(monkeypatch, ready_after=0)
+    runner.chapter_fix_interval = 1
+    runner.yard_click_count = 2
+    runner.chapter_unknown_count = 3
+
+    runner.try_fix_chapter()
+
+    assert runner.yard_click_count == 0
+    assert runner.chapter_unknown_count == 0
 
 
 def test_try_fix_chapter_stops_after_repeated_failures(monkeypatch):

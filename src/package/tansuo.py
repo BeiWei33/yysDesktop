@@ -76,6 +76,7 @@ class TanSuo(BasePackage):
         "tansuo_28_0",
         "tansuo_28_title",
         "treasure_box",
+        "yard_tansuo",
     ]
     chapter_list_region: tuple[int, int, int, int] = (930, 150, 206, 420)
     """章节列表区域（左, 上, 宽, 高），用于识别「第X章」文字"""
@@ -105,6 +106,10 @@ class TanSuo(BasePackage):
     """连续多少次未识别到探索界面后尝试切换目标章节"""
     chapter_fix_max_failures: int = 2
     """连续多少次切换目标章节失败后停止任务"""
+    chapter_unknown_limit: int = 5
+    """连续多少次界面完全无法识别（既不是章节列表也不是详情页）后停止任务"""
+    yard_click_limit: int = 3
+    """连续点多少次庭院探索入口仍回不到探索界面后停止任务"""
 
     @log_function_call
     def __init__(self, n: int = 0, temp_pop: bool = False) -> None:
@@ -120,6 +125,8 @@ class TanSuo(BasePackage):
         self.start_click_count = 0  # 连续点击IMAGE_START的次数
         self.chapter_miss_count = 0  # 连续未识别到探索界面的次数
         self.chapter_fix_failures = 0  # 连续切换目标章节失败的次数
+        self.chapter_unknown_count = 0  # 连续界面无法识别的次数（空转保护）
+        self.yard_click_count = 0  # 连续点庭院探索入口仍回不去探索界面的次数
 
     @staticmethod
     def configured_chapter() -> int:
@@ -155,6 +162,7 @@ class TanSuo(BasePackage):
         self.IMAGE_TREASURE_BOX = self.get_image_asset("treasure_box")
         self.IMAGE_TANSUO_28 = self.get_image_asset("tansuo_28")
         self.IMAGE_TITLE_28 = self.get_image_asset("title_28")
+        self.IMAGE_YARD_TANSUO = self.get_image_asset("yard_tansuo")
 
     @log_function_call
     def check_title(self) -> None:
@@ -460,11 +468,33 @@ class TanSuo(BasePackage):
         logger.ui_error(f"未识别到{self.target_chapter}章，请手动切换章节")
         return False
 
+    def back_to_exploration_from_yard(self) -> bool:
+        """在庭院时点击「探索」入口，尝试回到探索界面
+
+        探索/绘卷跑完一轮退出后，游戏可能直接回到庭院（桌面版会停在章节列表，
+        手机版退出层级更深）。庭院里探索入口是一个挂着的灯笼按钮（竖排「探索」文字），
+        点它即可回到探索界面。
+
+        Returns:
+            bool: 是否识别到庭院并点击了探索入口（不代表一定进入探索界面）
+        """
+        rule = RuleImage(self.IMAGE_YARD_TANSUO)
+        if not rule.match():
+            return False
+
+        logger.ui("当前在庭院，点击探索入口")
+        Mouse.click(rule.center_point())
+        sleep(2, 3)  # 等进入探索界面的过场
+        return True
+
     def try_fix_chapter(self, force: bool = False) -> None:
         """尝试切换到目标章节
 
         Args:
             force (bool): 忽略连续未识别的计数，立即尝试
+
+        Raises:
+            TanSuoChapterUnavailable: 界面长时间无法识别，或点探索入口后仍然回不去
         """
         self.chapter_miss_count += 1
         if not force and self.chapter_miss_count < self.chapter_fix_interval:
@@ -472,8 +502,27 @@ class TanSuo(BasePackage):
 
         self.chapter_miss_count = 0
         result = self.ensure_target_chapter()
-        if result is None:  # 还没进入探索界面，继续等待
+        if result is None:
+            # 退出探索后可能落到了庭院：先点探索入口回去再说
+            if self.back_to_exploration_from_yard():
+                self.yard_click_count += 1
+                if self.yard_click_count > self.yard_click_limit:
+                    raise TanSuoChapterUnavailable(
+                        "点击探索入口后仍未进入探索界面，已停止探索任务（请手动确认游戏画面）"
+                    )
+                return
+
+            # 界面一直不认识就不能无限等下去（原来这里不计失败次数，会一直空转）
+            self.chapter_unknown_count += 1
+            if self.chapter_unknown_count >= self.chapter_unknown_limit:
+                raise TanSuoChapterUnavailable(
+                    "连续多次看不到章节列表，已停止探索"
+                    "（请确认游戏在探索界面，或目标章节设置是否正确）"
+                )
             return
+
+        self.chapter_unknown_count = 0
+        self.yard_click_count = 0
         if result:
             self.chapter_fix_failures = 0
             return
