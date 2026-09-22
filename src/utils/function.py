@@ -118,10 +118,12 @@ def wait_until(predicate, timeout: float = 3.0, interval: float = 0.3, caller_na
             return True
 
         if time.time() >= deadline:
+            if caller_name:
+                logger.info(f"wait_until 超时（{caller_name}），已等待 {timeout} 秒")
             return False
 
+        # 不要传 caller_name：random_sleep 被 @log_caller 装饰，它会自己注入调用位置
         random_sleep(
-            caller_name=caller_name or "wait_until",
             minimum=max(interval * 0.8, 0.05),
             maximum=interval * 1.2,
         )

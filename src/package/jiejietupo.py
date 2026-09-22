@@ -10,7 +10,7 @@ from ..utils.decorator import log_function_call
 from ..utils.event import event_thread
 from ..utils.emulator import emulator
 from ..utils.exception import CustomException, GUIStopException
-from ..utils.function import finish_random_left_right, random_point, sleep
+from ..utils.function import finish_random_left_right, random_point, sleep, wait_until
 from ..utils.image import RuleImage
 from ..utils.log import logger
 from ..utils.paddleocr import RuleOcr
@@ -431,9 +431,14 @@ class JieJieTuPoGeRen(JieJieTuPo):
 
                 sleep()
                 finish_random_left_right()
-                sleep(2)
 
-                if not flag_victory and RuleImage(self.IMAGE_SUCCESS, region=success_region).match():
+                # 战斗刚结束，结界状态会变化（第 3 类：动作后会变的目标），
+                # 所以这里用轮询取新帧、不复用旧帧。上限保持原来的 sleep(2)。
+                if not flag_victory and wait_until(
+                    lambda: RuleImage(self.IMAGE_SUCCESS, region=success_region).match(),
+                    timeout=2.0,
+                    caller_name="check_barrier_state",
+                ):
                     logger.ui_warn(f"战斗结果纠正：第{barrier_index}个结界已攻破")
                     flag_victory = True
 
@@ -442,7 +447,8 @@ class JieJieTuPoGeRen(JieJieTuPo):
 
                 # 3胜奖励
                 if self.tupo_victory == 2 and flag_victory:
-                    sleep(2)
+                    # 等结算按钮出现（原来固定 sleep(2)，上限保持 2 秒）
+                    self.wait_frame([self.global_assets.IMAGE_FINISH], timeout=2.0)
                     while True:
                         if bool(event_thread):
                             raise GUIStopException
@@ -589,7 +595,7 @@ class JieJieTuPoGeRen(JieJieTuPo):
 
         self.fighting_into(self.tupo_geren_x[(i + 2) % 3 + 1], self.tupo_geren_y[(i + 2) // 3])
 
-        sleep(2)
+        # 原来的 sleep(2) 去掉了：下面的 wait_for_ready() 本身就是轮询等待准备界面
         while True:
             if bool(event_thread):
                 raise GUIStopException
@@ -601,7 +607,7 @@ class JieJieTuPoGeRen(JieJieTuPo):
             self.fighting_proactive_failure_once()
             count += 1
             logger.ui(f"失败次数: {count}")
-            sleep(2)
+            # 原来的 sleep(2) 去掉了：下面的 check_scene / check_click 都会轮询等待
             if count >= count_max:
                 if self.check_scene(self.IMAGE_FIGHT_AGAIN):
                     finish_random_left_right()
@@ -620,7 +626,7 @@ class JieJieTuPoGeRen(JieJieTuPo):
                 # 走到准备界面，安卓回车键在这里没有作用
                 KeyBoard.enter()
 
-        sleep(2)
+        # 原来的 sleep(2) 去掉了：下面的 check_scene 自带 15 秒轮询
         if not self.check_scene(self.IMAGE_FANGSHOUJILU, timeout=15):
             raise JieJieTuPoReadyTimeout("主动退级结束后未返回个人突破页面")
         self.ensure_lineup_locked()
@@ -630,7 +636,9 @@ class JieJieTuPoGeRen(JieJieTuPo):
     def refresh(self) -> None:
         """刷新"""
         flag_refresh = False  # 刷新提醒
-        sleep(4, 8)  # 强制等待
+        # 原来是无条件 sleep(4, 8)，改成轮询到刷新按钮出现就继续（上限保持 8 秒，
+        # 只是提前结束等待）。判定与点击之间没有其它动作，可以直接用这一帧。
+        self.wait_frame([self.IMAGE_REFRESH], timeout=8.0)
         import math
 
         while True:
@@ -641,18 +649,38 @@ class JieJieTuPoGeRen(JieJieTuPo):
             timenow = time.perf_counter()
             if self.time_refresh == 0 or self.time_refresh + 5 * 60 < timenow:
                 logger.ui("刷新中")
-                sleep(3, 6)
+                # 等刷新面板就绪（原来固定 sleep(3, 6)，上限保持 6 秒）
+                self.wait_frame([self.IMAGE_REFRESH], timeout=6.0)
                 self.check_click(self.IMAGE_REFRESH, wait=2)
-                sleep(2, 4)
+                # 等确认弹窗出现（原来固定 sleep(2, 4)，上限保持 4 秒）
+                self.wait_frame([self.IMAGE_REFRESH_TRUE], timeout=4.0)
                 self.check_click(self.IMAGE_REFRESH_TRUE, wait=0.5)
                 self.time_refresh = timenow
-                sleep(2, 6)
+                # 等新列表刷出来：确认弹窗消失即视为刷新完成（原来固定 sleep(2, 6)）
+                wait_until(
+                    lambda: not RuleImage(self.IMAGE_REFRESH_TRUE).match(),
+                    timeout=6.0,
+                    caller_name="refresh_wait_list",
+                )
                 break
             elif not flag_refresh:
                 time_wait = math.ceil(self.time_refresh + 5 * 60 - timenow)
                 logger.ui(f"等待刷新冷却，约{time_wait}秒")
                 flag_refresh = True
-                sleep(time_wait, time_wait + 5)
+                # 分段等待并报进度：用户主要看界面日志，长时间没有输出会以为卡死。
+                # 总等待时长与原来一致（原来是一次 sleep(time_wait, time_wait + 5)）。
+                remaining = time_wait
+                while remaining > 0:
+                    if bool(event_thread):
+                        raise GUIStopException
+                    chunk = min(30, remaining)
+                    sleep(chunk, chunk)
+                    remaining -= chunk
+                    if remaining > 0:
+                        logger.ui(f"仍在等待刷新冷却，剩余约{remaining}秒")
+                # 多睡 1 秒越过冷却边界：否则刚好卡在边界上时，下一轮两个分支都不命中，
+                # 循环会变成没有 sleep 的空转
+                sleep(1, 1.5)
 
     def lower_level(self):
         """降级，退九刷新"""
