@@ -147,7 +147,9 @@ class BasePackage:
                 raise GUIStopException
 
             if timeout and (time.time() - _start > timeout):
-                logger.error("check_click timeout")
+                # 带上素材名：曾经只打一句 "check_click timeout"，排查时无法判断是哪个素材没匹配到
+                name = getattr(asset, "description", "") or getattr(asset, "name", "") or "未知素材"
+                logger.ui_error(f"check_click 超时未找到：{name}")
                 return False
 
             if isinstance(asset, AssetImage):
