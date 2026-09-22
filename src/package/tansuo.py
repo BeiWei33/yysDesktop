@@ -588,19 +588,13 @@ class TanSuo(BasePackage):
             if bool(event_thread):
                 raise GUIStopException
 
-            # 等待加载完毕：轮询到相关素材出现就继续（最多等 2.5 秒，与原来的 sleep(1.5, 2) 上限相当）。
-            # 这一帧之后没有点击，可以直接复用它做下面的判断。
-            screenshot = self.wait_frame(
-                [
-                    self.IMAGE_CHUZHANXIAOHAO,
-                    self.IMAGE_START,
-                    self.IMAGE_TREASURE_BOX,
-                ],
-                timeout=2.5,
-            )
+            # 这里必须等结算界面彻底稳定再判断：曾经用「等到素材出现就立刻继续」替代固定等待，
+            # 结果动画没结束就点了「退出」，确认框没弹出来，后面 quit_true 必然超时
+            # （提速改动踩了自己定的规则：等到的这一帧本身可能来得太早）。
+            sleep(1.5, 2)
 
             # 如果还在探索里，说明有掉落物，直接退出
-            if RuleImage(self.IMAGE_CHUZHANXIAOHAO).match(screenshot):
+            if RuleImage(self.IMAGE_CHUZHANXIAOHAO).match():
                 logger.ui("有掉落物，直接退出")
                 self.check_click(self.IMAGE_QUIT, timeout=3)
                 sleep(1)
@@ -610,10 +604,10 @@ class TanSuo(BasePackage):
             else:
                 image_start = RuleImage(self.IMAGE_START)
                 image_treasure_box = RuleImage(self.IMAGE_TREASURE_BOX)
-                if image_start.match(screenshot):
+                if image_start.match():
                     logger.ui("探索结束")
                 # 宝箱
-                elif image_treasure_box.match(screenshot):
+                elif image_treasure_box.match():
                     Mouse.click(image_treasure_box.center_point())
                     logger.info("获得宝箱")
                     Mouse.click(wait=2)
