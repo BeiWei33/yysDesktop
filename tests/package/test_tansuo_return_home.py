@@ -19,16 +19,20 @@ from src.package.tansuo import TanSuo as ProductionTanSuo
 class ScreenMachine:
     """用一个"界面状态队列"模拟回退过程：每点一次就前进一格"""
 
-    def __init__(self, monkeypatch, screens: list[str], quit_visible: bool = True):
+    def __init__(self, monkeypatch, screens: list[str], quit_visible: bool = True, yard_anchor_visible: bool = False):
         self.screens = list(screens)
         self.quit_visible = quit_visible
+        self.yard_anchor_visible = yard_anchor_visible
         self.clicks: list[str] = []
         self.current = self.screens[0]
 
         runner = object.__new__(ProductionTanSuo)
         runner.IMAGE_YARD_TANSUO = SimpleNamespace(name="yard_tansuo")
+        runner.IMAGE_YARD_YINZHANG = SimpleNamespace(name="yard_yinzhang")
         runner.IMAGE_QUIT = SimpleNamespace(name="quit")
+        runner.yard_tansuo_point = (663, 225)
         runner.yard_click_count = 0
+        runner.yard_click_fail_count = 0
         runner.last_retreat_layers = 0
         runner.chapter_miss_count = 0
         runner.chapter_fix_failures = 0
@@ -50,6 +54,9 @@ class ScreenMachine:
         def match(self_rule, *args, **kwargs):
             if self_rule.asset.name == "yard_tansuo":
                 return self.current == "yard"
+            if self_rule.asset.name == "yard_yinzhang":
+                # 封印锚点：默认关闭，只在指定用例里打开（测"灯笼认不出但锚点认得出"）
+                return self.yard_anchor_visible and self.current == "yard"
             # 返回按钮只在"左侧有返回键"的界面上出现
             return self.quit_visible and self.current == "unknown_quit"
 
@@ -76,6 +83,12 @@ class ScreenMachine:
         monkeypatch.setattr(tansuo_module, "Mouse", SimpleNamespace(click=click))
         monkeypatch.setattr(tansuo_module, "wait_until", lambda *a, **k: True)
         monkeypatch.setattr(tansuo_module, "sleep", lambda *a, **k: None)
+        # 庭院组合判断会截一帧喂给多个素材，这里给假截图（命中与否由上面的 match 决定）
+        monkeypatch.setattr(
+            tansuo_module,
+            "ScreenShot",
+            lambda *a, **k: SimpleNamespace(rect=None, get_image=lambda: object()),
+        )
 
 
 def test_unknown_screen_clicks_back_button_then_returns(monkeypatch):

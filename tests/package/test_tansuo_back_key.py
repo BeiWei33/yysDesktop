@@ -36,19 +36,24 @@ class Machine:
         ocr_texts: tuple[str, ...] = (),
         emulator_enabled: bool = True,
         advance_on_back_key: bool = True,
+        yard_anchor_visible: bool = False,
     ):
         self.screens = list(screens)
         self.current = self.screens[0]
         self.quit_visible = quit_visible
         self.ocr_texts = ocr_texts
         self.advance_on_back_key = advance_on_back_key
+        self.yard_anchor_visible = yard_anchor_visible
         self.clicks: list[str] = []
         self.back_key_presses = 0
 
         runner = object.__new__(ProductionTanSuo)
         runner.IMAGE_YARD_TANSUO = SimpleNamespace(name="yard_tansuo")
+        runner.IMAGE_YARD_YINZHANG = SimpleNamespace(name="yard_yinzhang")
         runner.IMAGE_QUIT = SimpleNamespace(name="quit")
+        runner.yard_tansuo_point = (663, 225)
         runner.yard_click_count = 0
+        runner.yard_click_fail_count = 0
         runner.last_retreat_layers = 0
         runner.chapter_miss_count = 0
         runner.chapter_fix_failures = 0
@@ -71,6 +76,8 @@ class Machine:
         def match(asset):
             if asset.name == "yard_tansuo":
                 return self.current == "yard"
+            if asset.name == "yard_yinzhang":
+                return self.yard_anchor_visible and self.current == "yard"
             return self.quit_visible and self.current.startswith("unknown")
 
         monkeypatch.setattr(
@@ -111,6 +118,12 @@ class Machine:
             tansuo_module, "wait_until", lambda predicate, **kwargs: predicate()
         )
         monkeypatch.setattr(tansuo_module, "sleep", lambda *a, **k: None)
+        # 庭院组合判断会截一帧喂给多个素材，这里给假截图（命中与否由上面的 match 决定）
+        monkeypatch.setattr(
+            tansuo_module,
+            "ScreenShot",
+            lambda *a, **k: SimpleNamespace(rect=None, get_image=lambda: object()),
+        )
 
     def _press_back_key(self):
         self.back_key_presses += 1

@@ -62,6 +62,13 @@
             "file": "yard_tansuo.png",
             "description": "庭院-探索入口（灯笼文字）",
             "region": [0, 0, 0, 0],
+            "score": "0.65"
+        },
+        {
+            "name": "yard_yinzhang",
+            "file": "yard_yinzhang.png",
+            "description": "庭院-封印入口锚点",
+            "region": [0, 0, 0, 0],
             "score": "0.7"
         }
     ]

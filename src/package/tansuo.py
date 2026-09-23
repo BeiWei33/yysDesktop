@@ -78,6 +78,7 @@ class TanSuo(BasePackage):
         "tansuo_28_title",
         "treasure_box",
         "yard_tansuo",
+        "yard_yinzhang",
     ]
     chapter_list_region: tuple[int, int, int, int] = (930, 150, 206, 420)
     """章节列表区域（左, 上, 宽, 高），用于识别「第X章」文字"""
@@ -111,6 +112,15 @@ class TanSuo(BasePackage):
     """连续多少次界面完全无法识别（既不是章节列表也不是详情页）后停止任务"""
     yard_click_limit: int = 3
     """连续点多少次庭院探索入口仍回不到探索界面后停止任务"""
+    yard_click_fail_limit: int = 2
+    """连续多少次"判定为庭院但点灯笼后界面没变化"后停止任务"""
+    yard_tansuo_point: tuple[int, int] = (663, 225)
+    """庭院探索入口（灯笼）的固定坐标，仅靠锚点判定为庭院时用它兜底
+
+    实测：真实庭院截图里 yard_tansuo 素材匹配位置为 (650, 205)，素材 26x40，
+    中心即 (663, 225)；同一庭院不同时刻匹配到 (650, 201)，中心 (663, 221)，
+    位置稳定在 ±4 像素内。
+    """
     retreat_limit: int = 3
     """逐层回退时最多退几层（关掉个人突破等场景后可能落在多层子界面里）"""
     back_key_limit: int = 2
@@ -140,6 +150,7 @@ class TanSuo(BasePackage):
         self.chapter_fix_failures = 0  # 连续切换目标章节失败的次数
         self.chapter_unknown_count = 0  # 连续界面无法识别的次数（空转保护）
         self.yard_click_count = 0  # 连续点庭院探索入口仍回不去探索界面的次数
+        self.yard_click_fail_count = 0  # 连续"判定为庭院但点了探索入口界面没变化"的次数
         self.last_retreat_layers = 0  # 上一次逐层回退实际退了几层（用于日志）
         self.back_key_count = 0  # 本次逐层回退已按了几次返回键
         self.back_key_total_count = 0  # 多次逐层回退累计按返回键的次数（上限保护）
@@ -179,6 +190,50 @@ class TanSuo(BasePackage):
         self.IMAGE_TANSUO_28 = self.get_image_asset("tansuo_28")
         self.IMAGE_TITLE_28 = self.get_image_asset("title_28")
         self.IMAGE_YARD_TANSUO = self.get_image_asset("yard_tansuo")
+        self.IMAGE_YARD_YINZHANG = self.get_image_asset("yard_yinzhang")
+
+    def yard_assets(self) -> list:
+        """判定"是否在庭院"的素材集合
+
+        单一素材不够可靠：yard_tansuo（灯笼上的竖排「探索」）实测同一庭院不同时刻
+        只有 0.7975（阈值 0.7，余量仅 0.1），而庭院有云雾动画、会随活动换入口，
+        偶尔就掉到阈值以下——这正是"回到庭院却认不出、继续按返回键触发退出游戏弹窗"
+        那次故障的根因。
+
+        所以改成组合判断：任一素材命中即视为庭院。封印入口图标（yard_yinzhang）
+        实测在真实庭院截图上稳定 1.0000，在 40+ 张非庭院画面（含探索、个人突破、
+        战斗、结算等）上最高只有 0.4011，区分度远好于灯笼素材。
+        """
+        return [self.IMAGE_YARD_TANSUO, self.IMAGE_YARD_YINZHANG]
+
+    def on_yard(self) -> bool:
+        """组合判断当前是否停在庭院
+
+        Returns:
+            bool: 是否在庭院
+        """
+        return self.locate_yard_tansuo() is not None
+
+    def locate_yard_tansuo(self) -> tuple[Point, str] | None:
+        """组合判断是否在庭院，并定位探索入口
+
+        一次截图复用给全部素材（庭院 UI 是静止元素，同一帧内匹配不存在时机问题）。
+        先看灯笼素材；只有锚点命中时用实测固定坐标兜底。
+
+        Returns:
+            tuple[Point, str] | None: (探索入口坐标, 命中方式)，不在庭院时返回 None
+        """
+        screenshot = ScreenShot()
+        rule = RuleImage(self.IMAGE_YARD_TANSUO)
+        if rule.match(screenshot):
+            return rule.center_point(), "灯笼素材"
+
+        anchor = RuleImage(self.IMAGE_YARD_YINZHANG)
+        if anchor.match(screenshot):
+            # 只认出锚点时用固定坐标：实测同一庭院的灯笼位置稳定在 ±4 像素内
+            return Point(*self.yard_tansuo_point), "封印锚点"
+
+        return None
 
     @log_function_call
     def check_title(self) -> None:
@@ -493,21 +548,32 @@ class TanSuo(BasePackage):
         手机版退出层级更深）。庭院里探索入口是一个挂着的灯笼按钮（竖排「探索」文字），
         点它即可回到探索界面。
 
+        判定用组合判断（灯笼素材 + 封印锚点），点完会复核是否真的离开了庭院，
+        并把"点了还在庭院"计入连续失败次数。
+
         Returns:
             bool: 是否识别到庭院并点击了探索入口（不代表一定进入探索界面）
         """
-        rule = RuleImage(self.IMAGE_YARD_TANSUO)
-        if not rule.match():
+        located = self.locate_yard_tansuo()
+        if located is None:
             return False
 
-        logger.ui("当前在庭院，点击探索入口")
-        Mouse.click(rule.center_point())
+        point, how = located
+        logger.ui(f"当前在庭院（{how}命中），点击探索入口")
+        Mouse.click(point)
+
         # 等进入探索界面的过场：轮询到不再是庭院就继续，最多 4 秒
         wait_until(
-            lambda: not RuleImage(self.IMAGE_YARD_TANSUO).match(),
+            lambda: not self.on_yard(),
             timeout=4.0,
             caller_name="back_to_exploration_from_yard",
         )
+
+        if self.on_yard():
+            self.yard_click_fail_count += 1
+            logger.ui_warn(f"点击探索入口后仍在庭院（连续第{self.yard_click_fail_count}次）")
+        else:
+            self.yard_click_fail_count = 0
         return True
 
     def recognize_current_screen(self) -> str:
@@ -523,7 +589,7 @@ class TanSuo(BasePackage):
             return "chapter_list"
         if self.current_chapter() is not None:
             return "chapter_detail"
-        if RuleImage(self.IMAGE_YARD_TANSUO).match():
+        if self.on_yard():
             return "yard"
         return "unknown"
 
@@ -637,6 +703,11 @@ class TanSuo(BasePackage):
 
         # 3. 安卓返回键（桌面版不发，避免把 ESC 当返回键用）
         if emulator.enabled and self.back_key_count < self.back_key_limit:
+            # 按键前重新判定一次庭院：刚退回庭院却继续按返回键，会弹出「确定退出游戏吗？」
+            # （这是上次故障的直接引爆点，必须挡在按键之前）
+            if self.on_yard():
+                logger.ui_warn("按返回键前重新判定：当前已在庭院，改走庭院分支（不按返回键）")
+                return False
             acted = self.press_back_key()
             if not acted:
                 return False
@@ -651,6 +722,31 @@ class TanSuo(BasePackage):
             f"且没有可用的出口（返回素材未命中、文字未识别、返回键不可用）"
         )
         return False
+
+    def handle_yard_screen(self) -> bool:
+        """在庭院这一层：点探索入口，并检查是否回到可处理界面
+
+        庭院这一层只点一次，避免对着同一个位置连续猛点；连续多次"点了没变化"
+        就明确报错停止。
+
+        Returns:
+            bool: 是否回到了可处理的探索界面
+
+        Raises:
+            TanSuoChapterUnavailable: 连续多次点探索入口都无效
+        """
+        self.yard_click_count += 1
+        self.last_retreat_layers += 1
+        if not self.back_to_exploration_from_yard():
+            return False
+
+        if self.yard_click_fail_count >= self.yard_click_fail_limit:
+            raise TanSuoChapterUnavailable(
+                f"连续{self.yard_click_fail_count}次判定为庭院但点击探索入口后界面没有变化，"
+                "已停止探索任务（请手动确认游戏画面）"
+            )
+
+        return self.recognize_current_screen() in ("chapter_list", "chapter_detail")
 
     def return_home(self) -> bool:
         """逐层退回可处理的探索界面
@@ -679,15 +775,13 @@ class TanSuo(BasePackage):
                 return True
 
             if screen == "yard":
-                self.yard_click_count += 1
-                self.last_retreat_layers += 1
-                if not self.back_to_exploration_from_yard():
-                    return False
-                # 点在庭院这一层只点一次：还在庭院就把结果交回上层按次数上限处理，
-                # 避免对着同一个位置连续猛点
-                return self.recognize_current_screen() in ("chapter_list", "chapter_detail")
+                return self.handle_yard_screen()
 
             if not self.retreat_once(layer):
+                # 退不动了：退的过程中可能已经落回庭院（retreat_once 在按返回键前也会复查），
+                # 是庭院就走庭院分支，而不是直接放弃
+                if self.on_yard():
+                    return self.handle_yard_screen()
                 return False
 
         screen = self.recognize_current_screen()

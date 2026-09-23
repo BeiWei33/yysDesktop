@@ -74,6 +74,7 @@ def _make_runner(
     list_tail: int | None = None,
     list_base_y: int = 200,
     yard_visible: bool = False,
+    yard_anchor_visible: bool = False,
 ):
     """按章节列表滑动次数模拟28章何时出现。
 
@@ -81,22 +82,26 @@ def _make_runner(
         ready_after: 滑动多少次后28章出现（标题识别成功）
         list_visible: 章节列表是否能识别到「第X章」
         list_moves: 滑动后列表内容是否变化
-        detail_chapter: 章节详情页左上角识别到的章节号
+        detail_chapter: 章节详情页左上角识别的章节号
         entry_visible: 章节列表里是否能看到「第二十八章」
         click_polls: 点击28章后还要等几次检查才出现标题
         back_visible: 详情页左上角是否能识别到返回按钮
         list_tail: 列表只显示这一章（用于模拟最后一行被截断识别）
-        yard_visible: 当前是否停在庭院（能识别到庭院探索入口）
+        yard_visible: 当前是否停在庭院（能识别到庭院探索入口灯笼）
+        yard_anchor_visible: 只有封印锚点命中（灯笼素材认不出）的情况
     """
     runner = object.__new__(ProductionTanSuo)
     runner.IMAGE_TITLE_28 = object()
     runner.IMAGE_TANSUO_28 = object()
     runner.IMAGE_QUIT = object()
     runner.IMAGE_YARD_TANSUO = object()
+    runner.IMAGE_YARD_YINZHANG = object()
+    runner.yard_tansuo_point = (663, 225)
     runner.chapter_miss_count = 0
     runner.chapter_fix_failures = 0
     runner.chapter_unknown_count = 0
     runner.yard_click_count = 0
+    runner.yard_click_fail_count = 0
     runner.back_key_count = 0
     runner.back_key_total_count = 0
 
@@ -122,6 +127,9 @@ def _make_runner(
                 return back_visible and state["in_detail"]
             if self.asset is runner.IMAGE_YARD_TANSUO:
                 return yard_visible
+            if self.asset is runner.IMAGE_YARD_YINZHANG:
+                # 封印锚点：默认关闭，单独特意打开才命中（用于测"只认出锚点也能判定庭院"）
+                return yard_anchor_visible
             return False
 
         def center_point(self):
@@ -188,6 +196,12 @@ def _make_runner(
     )
     monkeypatch.setattr(tansuo_module, "sleep", lambda *args, **kwargs: None)
     monkeypatch.setattr(tansuo_module, "random_num", lambda a, b: a)
+    # 庭院组合判断要截一帧喂给多个素材，这里给个假截图（内容不重要，命中与否由 FakeRuleImage 决定）
+    monkeypatch.setattr(
+        tansuo_module,
+        "ScreenShot",
+        lambda *args, **kwargs: SimpleNamespace(rect=None, get_image=lambda: object()),
+    )
     # 不做真实等待：界面状态由假对象决定，判断一次即可（否则每个用例都要真等 3~4 秒）
     monkeypatch.setattr(tansuo_module, "wait_until", lambda predicate, **kwargs: predicate())
 
