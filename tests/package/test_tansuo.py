@@ -97,6 +97,8 @@ def _make_runner(
     runner.chapter_fix_failures = 0
     runner.chapter_unknown_count = 0
     runner.yard_click_count = 0
+    runner.back_key_count = 0
+    runner.back_key_total_count = 0
 
     state = {
         "scrolled": 0,
@@ -186,6 +188,8 @@ def _make_runner(
     )
     monkeypatch.setattr(tansuo_module, "sleep", lambda *args, **kwargs: None)
     monkeypatch.setattr(tansuo_module, "random_num", lambda a, b: a)
+    # 不做真实等待：界面状态由假对象决定，判断一次即可（否则每个用例都要真等 3~4 秒）
+    monkeypatch.setattr(tansuo_module, "wait_until", lambda predicate, **kwargs: predicate())
 
     return runner, state, events
 

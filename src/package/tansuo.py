@@ -1,6 +1,7 @@
-from ..utils.adapter import Mouse
+from ..utils.adapter import KeyBoard, Mouse
 from ..utils.config import config
 from ..utils.decorator import log_function_call
+from ..utils.emulator import emulator
 from ..utils.event import event_thread
 from ..utils.exception import CustomException, DailyLimitException, GUIStopException
 from ..utils.function import finish_random_left_right, random_normal, random_num, sleep, wait_until
@@ -112,6 +113,16 @@ class TanSuo(BasePackage):
     """连续点多少次庭院探索入口仍回不到探索界面后停止任务"""
     retreat_limit: int = 3
     """逐层回退时最多退几层（关掉个人突破等场景后可能落在多层子界面里）"""
+    back_key_limit: int = 2
+    """单次逐层回退里最多按几次安卓返回键（按了必须验证界面变化，没变化立即停）"""
+    back_key_total_limit: int = 4
+    """多次逐层回退累计按返回键的上限（防止每次调用都按两次而无限循环）"""
+    exit_button_texts: tuple[str, ...] = ("返回", "关闭", "退出", "返回庭院", "关闭界面")
+    """文字识别找出口按钮时的文案（精确匹配，避免点到含同样字样的标题上）"""
+    exit_game_markers: tuple[str, ...] = ("退出游戏", "退出客户端", "退出程序", "结束游戏")
+    """按返回键后可能出现的「退出游戏」弹窗特征词"""
+    cancel_button_texts: tuple[str, ...] = ("取消", "取消退出")
+    """「退出游戏」弹窗里必须点的按钮（绝不能点确定，那会把游戏关掉）"""
 
     @log_function_call
     def __init__(self, n: int = 0, temp_pop: bool = False) -> None:
@@ -130,6 +141,8 @@ class TanSuo(BasePackage):
         self.chapter_unknown_count = 0  # 连续界面无法识别的次数（空转保护）
         self.yard_click_count = 0  # 连续点庭院探索入口仍回不去探索界面的次数
         self.last_retreat_layers = 0  # 上一次逐层回退实际退了几层（用于日志）
+        self.back_key_count = 0  # 本次逐层回退已按了几次返回键
+        self.back_key_total_count = 0  # 多次逐层回退累计按返回键的次数（上限保护）
 
     @staticmethod
     def configured_chapter() -> int:
@@ -522,18 +535,137 @@ class TanSuo(BasePackage):
             "yard": "庭院",
         }.get(self.recognize_current_screen(), "无法识别的界面")
 
+    def find_exit_button_by_text(self) -> Point | None:
+        """文字识别找「返回/关闭/退出」这类出口按钮
+
+        精确匹配短文案：弹窗标题（例如「确定退出游戏吗？」）里也含这些词，
+        用包含匹配会点到标题上。
+
+        Returns:
+            Point | None: 出口按钮坐标，没找到返回 None
+        """
+        for item in RuleOcr().get_raw_result():
+            if item.text.strip() in self.exit_button_texts:
+                logger.info(f"文字识别到出口按钮：{item.text}")
+                return item.center
+        return None
+
+    def dismiss_exit_game_dialog(self) -> bool:
+        """按返回键后可能弹出「确定退出游戏吗？」，这时必须点「取消」
+
+        点确定会把游戏关掉，所以这里只精确匹配「取消」。
+
+        Returns:
+            bool: 是否检测到退出游戏弹窗（检测到就算被拦下，调用方应停止回退）
+        """
+        items = RuleOcr().get_raw_result()
+        hit_dialog = any(
+            any(marker in item.text for marker in self.exit_game_markers) for item in items
+        )
+        if not hit_dialog:
+            return False
+
+        for item in items:
+            if item.text.strip() in self.cancel_button_texts:
+                logger.ui("检测到退出游戏弹窗，点击取消")
+                Mouse.click(item.center)
+                return True
+
+        logger.ui_warn("检测到退出游戏弹窗但没找到取消按钮，已停止回退")
+        return True
+
+    def press_back_key(self) -> bool:
+        """按一次安卓返回键（仅模拟器模式）
+
+        返回键在多数界面等效于"返回上一层"，但庭院等界面可能弹出「确定退出游戏吗？」，
+        所以按完必须立刻检查弹窗，一旦出现就点取消并停止。
+
+        Returns:
+            bool: 是否确实按下了返回键（被退出游戏弹窗拦下时返回 False）
+        """
+        logger.ui("逐层回退：按安卓返回键")
+        self.back_key_count += 1
+        self.back_key_total_count += 1
+        KeyBoard.esc()
+        sleep(0.5, 1.0)
+
+        if self.dismiss_exit_game_dialog():
+            logger.ui_warn("返回键触发了退出游戏弹窗，已点取消并停止回退")
+            return False
+        return True
+
+    def screen_changed(self, timeout: float = 3.0) -> bool:
+        """验证操作之后界面确实变了（不再处于"不认识"的状态）"""
+        return wait_until(
+            lambda: self.recognize_current_screen() != "unknown",
+            timeout=timeout,
+            caller_name="return_home",
+        )
+
+    def retreat_once(self, layer: int) -> bool:
+        """在不认识的界面上做一次"往上退"的尝试
+
+        按优先级依次尝试，命中即止（每一步点完都要验证界面真的变了）：
+        1. 左上角返回素材（IMAGE_QUIT）
+        2. 文字识别「返回/关闭/退出」
+        3. 安卓返回键（仅模拟器模式，且次数受限）
+
+        Returns:
+            bool: 是否成功做了一次动作并且界面确实变了
+        """
+        # 1. 左上角返回素材
+        rule = RuleImage(self.IMAGE_QUIT)
+        if rule.match():
+            logger.ui(f"逐层回退（第{layer}层）：尝试点击左上角返回")
+            Mouse.click(rule.center_point())
+            self.last_retreat_layers += 1
+            if self.screen_changed():
+                return True
+            logger.ui_warn("点击返回后界面没有变化，停止回退")
+            return False
+
+        # 2. 文字识别出口按钮
+        point = self.find_exit_button_by_text()
+        if point is not None:
+            logger.ui(f"逐层回退（第{layer}层）：尝试文字识别返回")
+            Mouse.click(point)
+            self.last_retreat_layers += 1
+            if self.screen_changed():
+                return True
+            logger.ui_warn("点击文字识别的出口后界面没有变化，停止回退")
+            return False
+
+        # 3. 安卓返回键（桌面版不发，避免把 ESC 当返回键用）
+        if emulator.enabled and self.back_key_count < self.back_key_limit:
+            acted = self.press_back_key()
+            if not acted:
+                return False
+            self.last_retreat_layers += 1
+            if self.screen_changed():
+                return True
+            logger.ui_warn("按返回键后界面没有变化，停止回退")
+            return False
+
+        logger.info(
+            f"第{layer}层：界面不认识（{self.describe_screen()}），"
+            f"且没有可用的出口（返回素材未命中、文字未识别、返回键不可用）"
+        )
+        return False
+
     def return_home(self) -> bool:
         """逐层退回可处理的探索界面
 
-        每层只点有依据的按钮，点完必须验证界面真的变了：
+        每层按优先级找出口，命中即止、操作完必须验证界面真的变了：
         - 庭院：点「探索」灯笼（素材命中才点）
-        - 其它不认识的界面：点左上角返回按钮（素材命中才点，绝不盲点）
         - 章节列表/章节详情：直接算回到家，交给原有流程
+        - 其它不认识的界面：左上角返回素材 → 文字识别返回/关闭/退出 → 安卓返回键
+        任何一步操作完界面没变化就立刻停止，绝不连点。
 
         Returns:
             bool: 是否回到了可处理的界面
         """
         self.last_retreat_layers = 0
+        self.back_key_count = 0  # 只统计本次调用按了几次返回键
 
         for layer in range(1, self.retreat_limit + 1):
             if bool(event_thread):
@@ -543,6 +675,7 @@ class TanSuo(BasePackage):
             if screen in ("chapter_list", "chapter_detail"):
                 if self.last_retreat_layers:
                     logger.ui(f"已回退 {self.last_retreat_layers} 层，回到{self.describe_screen()}")
+                self.back_key_total_count = 0
                 return True
 
             if screen == "yard":
@@ -554,21 +687,7 @@ class TanSuo(BasePackage):
                 # 避免对着同一个位置连续猛点
                 return self.recognize_current_screen() in ("chapter_list", "chapter_detail")
 
-            # 完全不认识的界面：只有识别到返回按钮才点，点了没变化就放弃
-            rule = RuleImage(self.IMAGE_QUIT)
-            if not rule.match():
-                logger.info(f"第{layer}层：界面不认识（{self.describe_screen()}），且未识别到返回按钮")
-                return False
-
-            logger.ui(f"第{layer}层界面不认识，点击左上角返回")
-            Mouse.click(rule.center_point())
-            self.last_retreat_layers += 1
-            if not wait_until(
-                lambda: self.recognize_current_screen() != "unknown",
-                timeout=3.0,
-                caller_name="return_home",
-            ):
-                logger.ui_warn("点击返回后界面没有变化，停止回退")
+            if not self.retreat_once(layer):
                 return False
 
         screen = self.recognize_current_screen()
@@ -597,14 +716,20 @@ class TanSuo(BasePackage):
             if self.return_home():
                 self.chapter_unknown_count = 0
                 self.yard_click_count = 0
+                self.back_key_total_count = 0
                 return
 
             if self.last_retreat_layers:
-                # 已经做过回退动作（点了庭院入口或返回按钮），不算"界面不认识"的空转，
-                # 但庭院入口反复点不通仍要停下来
+                # 已经做过回退动作（点了庭院入口/返回按钮/按了返回键），不算"界面不认识"的空转，
+                # 但这些动作反复无效仍要停下来，避免一直退不出去
                 if self.yard_click_count > self.yard_click_limit:
                     raise TanSuoChapterUnavailable(
                         "点击探索入口后仍未进入探索界面，已停止探索任务（请手动确认游戏画面）"
+                    )
+                if self.back_key_total_count >= self.back_key_total_limit:
+                    raise TanSuoChapterUnavailable(
+                        f"多次尝试返回（累计按返回键{self.back_key_total_count}次）仍无法回到探索界面，"
+                        f"已停止探索任务（最后识别到：{self.describe_screen()}；请手动确认游戏画面）"
                     )
                 return
 
@@ -620,6 +745,7 @@ class TanSuo(BasePackage):
 
         self.chapter_unknown_count = 0
         self.yard_click_count = 0
+        self.back_key_total_count = 0
         if result:
             self.chapter_fix_failures = 0
             return

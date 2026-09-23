@@ -33,10 +33,19 @@ class ScreenMachine:
         runner.chapter_miss_count = 0
         runner.chapter_fix_failures = 0
         runner.chapter_unknown_count = 0
+        runner.back_key_count = 0
+        runner.back_key_total_count = 0
         runner.chapter_fix_interval = 1
         runner.chapter_list_visible = lambda: self.current == "chapter_list"
         runner.current_chapter = lambda: 3 if self.current == "chapter_detail" else None
         self.runner = runner
+
+        # 默认：文字识别看不到任何出口按钮（这些用例只考察返回素材那条路）
+        monkeypatch.setattr(
+            tansuo_module,
+            "RuleOcr",
+            lambda *a, **k: SimpleNamespace(get_raw_result=lambda: []),
+        )
 
         def match(self_rule, *args, **kwargs):
             if self_rule.asset.name == "yard_tansuo":
