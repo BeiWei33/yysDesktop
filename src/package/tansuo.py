@@ -110,6 +110,8 @@ class TanSuo(BasePackage):
     """连续多少次界面完全无法识别（既不是章节列表也不是详情页）后停止任务"""
     yard_click_limit: int = 3
     """连续点多少次庭院探索入口仍回不到探索界面后停止任务"""
+    retreat_limit: int = 3
+    """逐层回退时最多退几层（关掉个人突破等场景后可能落在多层子界面里）"""
 
     @log_function_call
     def __init__(self, n: int = 0, temp_pop: bool = False) -> None:
@@ -127,6 +129,7 @@ class TanSuo(BasePackage):
         self.chapter_fix_failures = 0  # 连续切换目标章节失败的次数
         self.chapter_unknown_count = 0  # 连续界面无法识别的次数（空转保护）
         self.yard_click_count = 0  # 连续点庭院探索入口仍回不去探索界面的次数
+        self.last_retreat_layers = 0  # 上一次逐层回退实际退了几层（用于日志）
 
     @staticmethod
     def configured_chapter() -> int:
@@ -185,6 +188,8 @@ class TanSuo(BasePackage):
             if msg_title:
                 msg_title = False
                 self.title_error_msg()
+                # 顺手记一下当前识别到的界面，便于判断落在哪一层
+                logger.info(f"check_title 无法识别探索界面，当前识别到：{self.describe_screen()}")
 
             # 目标章节不是 28 章时没有对应的列表/标题素材，改为按文字识别进入目标章节
             if self.target_chapter not in (0, 28) and self.chapter_ready():
@@ -484,8 +489,93 @@ class TanSuo(BasePackage):
 
         logger.ui("当前在庭院，点击探索入口")
         Mouse.click(rule.center_point())
-        sleep(2, 3)  # 等进入探索界面的过场
+        # 等进入探索界面的过场：轮询到不再是庭院就继续，最多 4 秒
+        wait_until(
+            lambda: not RuleImage(self.IMAGE_YARD_TANSUO).match(),
+            timeout=4.0,
+            caller_name="back_to_exploration_from_yard",
+        )
         return True
+
+    def recognize_current_screen(self) -> str:
+        """判断当前落在哪一层界面
+
+        关掉个人突破等场景后，游戏可能停在任意子界面，需要先认清所在位置再决定动作。
+
+        Returns:
+            str: "chapter_list"（章节列表）/ "chapter_detail"（章节详情）/ "yard"（庭院）
+                / "unknown"（不认识）
+        """
+        if self.chapter_list_visible():
+            return "chapter_list"
+        if self.current_chapter() is not None:
+            return "chapter_detail"
+        if RuleImage(self.IMAGE_YARD_TANSUO).match():
+            return "yard"
+        return "unknown"
+
+    def describe_screen(self) -> str:
+        """把当前界面转成可读文案，方便写进日志"""
+        return {
+            "chapter_list": "章节列表",
+            "chapter_detail": "章节详情页",
+            "yard": "庭院",
+        }.get(self.recognize_current_screen(), "无法识别的界面")
+
+    def return_home(self) -> bool:
+        """逐层退回可处理的探索界面
+
+        每层只点有依据的按钮，点完必须验证界面真的变了：
+        - 庭院：点「探索」灯笼（素材命中才点）
+        - 其它不认识的界面：点左上角返回按钮（素材命中才点，绝不盲点）
+        - 章节列表/章节详情：直接算回到家，交给原有流程
+
+        Returns:
+            bool: 是否回到了可处理的界面
+        """
+        self.last_retreat_layers = 0
+
+        for layer in range(1, self.retreat_limit + 1):
+            if bool(event_thread):
+                raise GUIStopException
+
+            screen = self.recognize_current_screen()
+            if screen in ("chapter_list", "chapter_detail"):
+                if self.last_retreat_layers:
+                    logger.ui(f"已回退 {self.last_retreat_layers} 层，回到{self.describe_screen()}")
+                return True
+
+            if screen == "yard":
+                self.yard_click_count += 1
+                self.last_retreat_layers += 1
+                if not self.back_to_exploration_from_yard():
+                    return False
+                # 点在庭院这一层只点一次：还在庭院就把结果交回上层按次数上限处理，
+                # 避免对着同一个位置连续猛点
+                return self.recognize_current_screen() in ("chapter_list", "chapter_detail")
+
+            # 完全不认识的界面：只有识别到返回按钮才点，点了没变化就放弃
+            rule = RuleImage(self.IMAGE_QUIT)
+            if not rule.match():
+                logger.info(f"第{layer}层：界面不认识（{self.describe_screen()}），且未识别到返回按钮")
+                return False
+
+            logger.ui(f"第{layer}层界面不认识，点击左上角返回")
+            Mouse.click(rule.center_point())
+            self.last_retreat_layers += 1
+            if not wait_until(
+                lambda: self.recognize_current_screen() != "unknown",
+                timeout=3.0,
+                caller_name="return_home",
+            ):
+                logger.ui_warn("点击返回后界面没有变化，停止回退")
+                return False
+
+        screen = self.recognize_current_screen()
+        if screen in ("chapter_list", "chapter_detail"):
+            return True
+        logger.ui_warn(f"已回退{self.last_retreat_layers}层仍未回到探索界面（当前：{self.describe_screen()}）")
+        return False
 
     def try_fix_chapter(self, force: bool = False) -> None:
         """尝试切换到目标章节
@@ -494,7 +584,7 @@ class TanSuo(BasePackage):
             force (bool): 忽略连续未识别的计数，立即尝试
 
         Raises:
-            TanSuoChapterUnavailable: 界面长时间无法识别，或点探索入口后仍然回不去
+            TanSuoChapterUnavailable: 界面长时间无法识别，或逐层回退后仍然回不去
         """
         self.chapter_miss_count += 1
         if not force and self.chapter_miss_count < self.chapter_fix_interval:
@@ -503,21 +593,28 @@ class TanSuo(BasePackage):
         self.chapter_miss_count = 0
         result = self.ensure_target_chapter()
         if result is None:
-            # 退出探索后可能落到了庭院：先点探索入口回去再说
-            if self.back_to_exploration_from_yard():
-                self.yard_click_count += 1
+            # 退出探索/关掉个人突破后可能落到庭院或其它子界面：先逐层回退试试
+            if self.return_home():
+                self.chapter_unknown_count = 0
+                self.yard_click_count = 0
+                return
+
+            if self.last_retreat_layers:
+                # 已经做过回退动作（点了庭院入口或返回按钮），不算"界面不认识"的空转，
+                # 但庭院入口反复点不通仍要停下来
                 if self.yard_click_count > self.yard_click_limit:
                     raise TanSuoChapterUnavailable(
                         "点击探索入口后仍未进入探索界面，已停止探索任务（请手动确认游戏画面）"
                     )
                 return
 
-            # 界面一直不认识就不能无限等下去（原来这里不计失败次数，会一直空转）
+            # 回退不了就不能无限等下去（原来这里不计失败次数，会一直空转）
             self.chapter_unknown_count += 1
             if self.chapter_unknown_count >= self.chapter_unknown_limit:
                 raise TanSuoChapterUnavailable(
                     "连续多次看不到章节列表，已停止探索"
-                    "（请确认游戏在探索界面，或目标章节设置是否正确）"
+                    f"（已尝试逐层回退{self.last_retreat_layers}层，最后识别到：{self.describe_screen()}；"
+                    "请确认游戏在探索界面，或目标章节设置是否正确）"
                 )
             return
 
