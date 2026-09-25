@@ -14,6 +14,7 @@ from ..utils.image import AssetImage, RuleImage
 from ..utils.log import logger
 from ..utils.mysignal import global_ms as ms
 from ..utils.paddleocr import RuleOcr
+from ..utils.point import Point
 from ..utils.screenshot import ScreenShot
 from ..utils.toast import toast
 from ..utils.window import window_manager
@@ -30,6 +31,10 @@ class BasePackage:
     """资源列表"""
     init: bool = False
     """初始化"""
+    highlight_click_point: tuple[int, int] = (568, 260)
+    """高光界面点击位置：画面中上部空白处，避开右下角「分享」和左下角「我的阵容」"""
+    highlight_click_limit: int = 3
+    """单次流程里最多点击几次高光界面"""
 
     @log_function_call
     def __init__(self, n: int = 0) -> None:
@@ -43,6 +48,8 @@ class BasePackage:
         """当前使用的资源列表"""
         self.current_scene: str = ""
         """当前场景"""
+        self.highlight_continue_count: int = 0
+        """已点击高光界面的次数"""
 
         self.global_assets = GlobalResource()
         """通用资源"""
@@ -401,6 +408,40 @@ class BasePackage:
                 sleep(1.0, 1.5)
                 return True
         return False
+
+    def tap_highlight_continue(self) -> bool:
+        """高光结算界面：点一下画面继续
+
+        斗技等玩法打赢之后有时会进入全屏高光界面（「拔得头筹」标题 + 金色「N连胜」），
+        这类界面没有任何按钮、也没有「点击屏幕继续」提示，现有素材都匹配不到，
+        但点一下画面任意位置就会进入下一个画面，所以用文字识别兜底。
+
+        安全设计：
+        - 关键字「连胜」只在画面**下三分之一**（素材 region）里找，聊天公告等
+          上方文字不会命中
+        - 单次流程最多点 ``highlight_click_limit`` 次
+        - 点完验证画面确实变了，没变就不再重复点（避免对着同一个界面连点）
+        - 点击位置避开右下角「分享」和左下角「我的阵容」
+
+        Returns:
+            bool: 是否识别到高光界面并点击了画面
+        """
+        if self.highlight_continue_count >= self.highlight_click_limit:
+            return False
+
+        rule = RuleOcr(self.global_assets.OCR_HIGHLIGHT_CONTINUE)
+        if not rule.match():
+            return False
+
+        self.highlight_continue_count += 1
+        logger.ui(f"识别到高光界面（{rule.match_result.text}），点击画面继续")
+        Mouse.click(Point(*self.highlight_click_point))
+
+        # 验证画面确实翻页了；没变化说明点的地方没用，不再重复点
+        if not wait_until(lambda: not rule.match(), timeout=3.0):
+            logger.ui_warn("点击高光界面后画面没有变化，不再重复点击")
+            self.highlight_continue_count = self.highlight_click_limit
+        return True
 
     @log_function_call
     def ensure_finish(self):

@@ -84,6 +84,10 @@ class DouJi(BasePackage):
 
             result = ocr_match_once(self.current_asset_list)
             if result is None:
+                # 高光结算界面（「拔得头筹」+「N连胜」）没有任何按钮，也没在预期素材里，
+                # 识别到就点一下画面继续，否则会一直卡在这个界面上
+                if self.tap_highlight_continue():
+                    continue
                 for fail_img in self.global_assets.ALL_FAIL_IMAGES:
                     ruleimage = RuleImage(fail_img)
                     if ruleimage.match():

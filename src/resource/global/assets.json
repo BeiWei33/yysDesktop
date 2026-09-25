@@ -190,6 +190,13 @@
             "region": [0, 0, 0, 0],
             "score": "0.6",
             "method": "PERFACT"
+        },
+        {
+            "name": "highlight_continue",
+            "keyword": "连胜",
+            "region": [0, 430, 1136, 210],
+            "score": "0.7",
+            "method": "INCLUDE"
         }
     ]
 }

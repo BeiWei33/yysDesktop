@@ -76,6 +76,7 @@ class GlobalResource:
         self.OCR_CANCEL = self.get_ocr_asset("cancel")
         self.OCR_CONFIRM = self.get_ocr_asset("confirm")
         self.OCR_CLICK_AND_CONTINUE = self.get_ocr_asset("click_and_continue")
+        self.OCR_HIGHLIGHT_CONTINUE = self.get_ocr_asset("highlight_continue")
         self.OCR_START = self.get_ocr_asset("start")
 
     @property
